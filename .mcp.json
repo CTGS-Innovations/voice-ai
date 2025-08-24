@@ -1,0 +1,46 @@
+{
+  "mcpServers": {
+    "jambonz-feature-server": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/jambonz/jambonz-feature-server"
+      ]
+    },
+    "jambonz-api-server": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/jambonz/jambonz-api-server"
+      ]
+    },
+    "jambonz-sbc-outbound": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/jambonz/sbc-outbound"
+      ]
+    },
+    "jambonz-sbc-inbound": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/jambonz/sbc-inbound"
+      ]
+    },
+    "drachtio-freeswitch-mrf": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/drachtio/drachtio-freeswitch-mrf"
+      ]
+    },
+    "drachtio-server": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/drachtio/drachtio-server"
+      ]
+    }
+  }
+}

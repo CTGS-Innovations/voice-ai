@@ -1,0 +1,350 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: jambonz-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-jambonzR0ck$}
+      MYSQL_DATABASE: jambones
+      MYSQL_USER: jambonz
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jambonzP@ss}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database:/docker-entrypoint-initdb.d
+    networks:
+      - jambonz
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 5s
+      retries: 10
+
+  # Database initialization service  
+  db-init:
+    image: mysql:8.0
+    container_name: jambonz-db-init
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-jambonzR0ck$}
+    networks:
+      - jambonz
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: >
+      sh -c '
+        echo "Waiting for MySQL to be ready..." &&
+        sleep 10 &&
+        
+        echo "Downloading Jambonz schema and seed data..." &&
+        apt-get update -qq && apt-get install -y curl &&
+        curl -sL https://raw.githubusercontent.com/jambonz/jambonz-api-server/main/db/jambones-sql.sql -o /tmp/schema.sql &&
+        curl -sL https://raw.githubusercontent.com/jambonz/jambonz-api-server/main/db/seed-production-database-open-source.sql -o /tmp/seed.sql &&
+        
+        echo "Checking if database already initialized..." &&
+        TABLES=$$(mysql -h mysql -uroot -p${MYSQL_ROOT_PASSWORD:-jambonzR0ck$$} jambones -e "SHOW TABLES;" 2>/dev/null | wc -l) &&
+        
+        if [ $$TABLES -lt 5 ]; then
+          echo "Initializing database schema..." &&
+          mysql -h mysql -uroot -p${MYSQL_ROOT_PASSWORD:-jambonzR0ck$$} jambones < /tmp/schema.sql &&
+          
+          echo "Seeding initial data..." &&
+          mysql -h mysql -uroot -p${MYSQL_ROOT_PASSWORD:-jambonzR0ck$$} jambones < /tmp/seed.sql &&
+          
+          echo "Configuring webhook application..." &&
+          mysql -h mysql -uroot -p${MYSQL_ROOT_PASSWORD:-jambonzR0ck$$} jambones -e "
+            UPDATE voip_carriers SET account_sid = (SELECT account_sid FROM accounts LIMIT 1) WHERE name = \"VoIP.ms\";
+            INSERT INTO applications (application_sid, account_sid, name, call_hook_url, call_status_hook_url) 
+            VALUES (UUID(), (SELECT account_sid FROM accounts LIMIT 1), \"AI Voice App\", \"http://app:3003/hello-world\", \"http://app:3003/call-status\") 
+            ON DUPLICATE KEY UPDATE call_hook_url = VALUES(call_hook_url);
+            UPDATE phone_numbers SET application_sid = (SELECT application_sid FROM applications WHERE name = \"AI Voice App\" LIMIT 1) WHERE number = \"14132004849\";
+          " &&
+          echo "Database initialization complete!"
+        else
+          echo "Database already initialized, skipping..."
+        fi
+      '
+    restart: "no"
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: jambonz-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - jambonz
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Drachtio SIP Server
+  drachtio:
+    image: drachtio/drachtio-server:latest
+    container_name: jambonz-drachtio
+    environment:
+      DRACHTIO_SECRET: ${DRACHTIO_SECRET:-cymru}
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "9022:9022/tcp"
+    networks:
+      - jambonz
+    command: drachtio --contact "sip:*:5060;transport=udp,tcp" --external-ip 76.28.51.233 --loglevel info --sofia-loglevel 3
+
+  # RTPengine for media proxying
+  rtpengine:
+    image: drachtio/rtpengine:latest
+    container_name: jambonz-rtpengine
+    command: rtpengine --interface=172.20.0.15 --listen-ng=172.20.0.15:22222 --port-min=30000 --port-max=30100 --foreground --log-stderr --log-level=6
+    ports:
+      - "22222:22222/udp"
+      - "30000-30100:30000-30100/udp"
+    networks:
+      jambonz:
+        ipv4_address: 172.20.0.15
+    cap_add:
+      - NET_ADMIN
+
+  # FreeSWITCH Media Server
+  freeswitch:
+    image: drachtio/drachtio-freeswitch-mrf:latest
+    container_name: jambonz-freeswitch
+    hostname: freeswitch
+    command: ["freeswitch", "--event-socket-port", "8021", "--password", "ClueCon", "--sip-port", "5080", "--rtp-range-start", "30000", "--rtp-range-end", "30100"]
+    ports:
+      - "8021:8021"
+    networks:
+      - jambonz
+
+  # Jambonz API Server
+  api-server:
+    image: jambonz/jambonz-api-server:latest
+    container_name: jambonz-api-server
+    environment:
+      NODE_ENV: development
+      HTTP_PORT: 3000
+      JAMBONES_LOGLEVEL: trace
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambonz
+      JAMBONES_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jambonzP@ss}
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JWT_SECRET: "${JWT_SECRET:-jambonzJWTsecret}"
+      ENCRYPTION_SECRET: "${ENCRYPTION_SECRET:-jambonzEncryptsecret}"
+      JAMBONES_TIME_SERIES_HOST: ${INFLUX_HOST:-influxdb}
+    ports:
+      - "3000:3000"
+    networks:
+      - jambonz
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Jambonz Feature Server
+  feature-server:
+    image: jambonz/jambonz-feature-server:latest
+    container_name: jambonz-feature-server
+    environment:
+      NODE_ENV: development
+      HTTP_PORT: 3001
+      JAMBONES_LOGLEVEL: trace
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: ${DRACHTIO_SECRET:-cymru}
+      JAMBONES_FREESWITCH: freeswitch:8021:${FREESWITCH_SECRET:-ClueCon}
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambonz
+      JAMBONES_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jambonzP@ss}
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JAMBONES_NETWORK_CIDR: 172.20.0.0/16
+      JAMBONES_SBCS: sbc-inbound,sbc-outbound
+      ENCRYPTION_SECRET: "${ENCRYPTION_SECRET:-jambonzEncryptsecret}"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      JAMBONES_TIME_SERIES_HOST: ${INFLUX_HOST:-influxdb}
+      ENABLE_METRICS: ${ENABLE_METRICS:-1}
+      JAMBONZ_DIAL_PAI_HEADER: "true"
+      JAMBONES_HTTP_USER_AGENT_HEADER: "jambonz-voip-dev"
+      JAMBONES_INJECT_CONTENT: "true"
+      JAMBONES_DISABLE_DIRECT_P2P_CALL: "true"
+    ports:
+      - "3001:3001"
+    networks:
+      - jambonz
+    depends_on:
+      - mysql
+      - redis
+      - drachtio
+      - freeswitch
+    volumes:
+      - ./app/config:/app/config
+
+  # SBC Inbound
+  sbc-inbound:
+    image: jambonz/sbc-inbound:debug
+    container_name: jambonz-sbc-inbound
+    environment:
+      NODE_ENV: development
+      JAMBONES_LOGLEVEL: trace
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: ${DRACHTIO_SECRET:-cymru}
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambonz
+      JAMBONES_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jambonzP@ss}
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JAMBONES_NETWORK_CIDR: 172.20.0.0/16
+      JAMBONES_RTPENGINES: 172.20.0.15:22222
+      JWT_SECRET: "${JWT_SECRET:-jambonzJWTsecret}"
+      ENCRYPTION_SECRET: "${ENCRYPTION_SECRET:-jambonzEncryptsecret}"
+      JAMBONES_TIME_SERIES_HOST: ${INFLUX_HOST:-influxdb}
+      SBC_ACCOUNT_SID: 9351f46a-678c-43f5-b8a6-d4eb58d131af
+      JAMBONES_TRACK_ACCOUNT_CALLS: "true"
+      JAMBONES_FEATURE_SERVERS: "feature-server:3001"
+      JAMBONES_DEBUG_CALL_COUNTS: "true"
+    networks:
+      - jambonz
+    depends_on:
+      - mysql
+      - redis
+      - drachtio
+      - rtpengine
+
+  # SBC Outbound
+  sbc-outbound:
+    image: jambonz/sbc-outbound:latest
+    container_name: jambonz-sbc-outbound
+    environment:
+      NODE_ENV: development
+      JAMBONES_LOGLEVEL: trace
+      DRACHTIO_HOST: drachtio
+      DRACHTIO_PORT: 9022
+      DRACHTIO_SECRET: ${DRACHTIO_SECRET:-cymru}
+      JAMBONES_MYSQL_HOST: mysql
+      JAMBONES_MYSQL_PORT: 3306
+      JAMBONES_MYSQL_USER: jambonz
+      JAMBONES_MYSQL_PASSWORD: ${MYSQL_PASSWORD:-jambonzP@ss}
+      JAMBONES_MYSQL_DATABASE: jambones
+      JAMBONES_REDIS_HOST: redis
+      JAMBONES_REDIS_PORT: 6379
+      JAMBONES_NETWORK_CIDR: 172.20.0.0/16
+      JAMBONES_RTPENGINES: 172.20.0.15:22222
+      JAMBONES_TIME_SERIES_HOST: ${INFLUX_HOST:-influxdb}
+    networks:
+      - jambonz
+    depends_on:
+      - mysql
+      - redis
+      - drachtio
+      - rtpengine
+
+  # Jambonz Web Application
+  webapp:
+    image: jambonz/jambonz-webapp:latest
+    container_name: jambonz-webapp
+    environment:
+      REACT_APP_API_BASE_URL: http://localhost:3000/v1
+    ports:
+      - "3002:3001"
+    networks:
+      - jambonz
+    depends_on:
+      - api-server
+
+  # Clean HTTP Webhook Application (replaces WebSocket app)
+  app:
+    build: ./app-http
+    container_name: jambonz-app-http
+    environment:
+      NODE_ENV: development
+      HTTP_PORT: 3003
+      LOGLEVEL: debug
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-21m00Tcm4TlvDq8ikWAM}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+    ports:
+      - "3003:3003"
+    networks:
+      - jambonz
+    volumes:
+      - ./app-http:/app
+      - /app/node_modules
+    depends_on:
+      - feature-server
+
+
+  # Redis registration fix service
+  redis-fix:
+    image: redis:7-alpine
+    container_name: jambonz-redis-fix
+    networks:
+      - jambonz
+    depends_on:
+      - redis
+      - feature-server
+    command: >
+      sh -c "
+        echo 'Waiting for services to start...' &&
+        sleep 20 &&
+        
+        echo 'Checking feature-server registration...' &&
+        while true; do
+          CURRENT=\$$(redis-cli -h redis SMEMBERS 'default:active-fs' | wc -l)
+          if [ \$$CURRENT -eq 0 ]; then
+            echo 'Feature server not registered, adding to Redis...' &&
+            FEATURE_IP=\$$(getent hosts feature-server | awk '{print \$$1}')
+            redis-cli -h redis SADD 'default:active-fs' \"http://\$$FEATURE_IP:3001\"
+            echo 'Registered feature-server at http://'\$$FEATURE_IP':3001'
+          fi
+          sleep 30
+        done
+      "
+    restart: unless-stopped
+
+  # InfluxDB for time-series metrics (required by Jambonz)
+  influxdb:
+    image: influxdb:1.8-alpine
+    container_name: jambonz-influxdb
+    environment:
+      INFLUXDB_DB: jambonz_metrics
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+    ports:
+      - "8086:8086"
+    networks:
+      - jambonz
+    volumes:
+      - influxdb_data:/var/lib/influxdb
+
+networks:
+  jambonz:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  mysql_data:
+  influxdb_data:

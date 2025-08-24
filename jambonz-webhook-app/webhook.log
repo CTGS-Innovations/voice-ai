@@ -1,0 +1,123 @@
+
+========================================
+Jambonz Webhook Server Started
+========================================
+Port: 3003
+URL: http://localhost:3003
+
+Webhook endpoints:
+  - Call webhook: http://localhost:3003/webhook/call
+  - Status webhook: http://localhost:3003/webhook/status
+
+Integrations:
+  - OpenAI: Configured ✓
+  - ElevenLabs: Configured ✓
+========================================
+
+=== NEW INCOMING CALL ===
+Call SID: 5223adb3-8351-4379-a830-f55b1b113cab
+From: 4133984849
+To: 4137524849
+Sending initial TTS test: [
+  {
+    "verb": "say",
+    "text": "Hello! This is a test using default TTS. Can you hear this message?"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 3,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/call [32m200[0m 2.383 ms - 293[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: 5223adb3-8351-4379-a830-f55b1b113cab
+Status: trying
+[0mPOST /webhook/status [32m200[0m 0.754 ms - 2[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: 5223adb3-8351-4379-a830-f55b1b113cab
+Status: in-progress
+[0mPOST /webhook/status [32m200[0m 0.605 ms - 2[0m
+
+=== CONVERSATION INPUT ===
+User said: Are you working?
+Generating AI response...
+AI response: Yes, I'm here and ready to help you. Is there something specific you need assistance with?
+Using ElevenLabs streaming audio: https://talk.mvp-scale.com/audio/stream/bc0209f2e8952c231b36cddfc77da058?text=Yes%2C%20I'm%20here%20and%20ready%20to%20help%20you.%20Is%20there%20something%20specific%20you%20need%20assistance%20with%3F&callSid=5223adb3-8351-4379-a830-f55b1b113cab
+Sending TTS test response: [
+  {
+    "verb": "play",
+    "url": "https://talk.mvp-scale.com/audio/stream/bc0209f2e8952c231b36cddfc77da058?text=Yes%2C%20I'm%20here%20and%20ready%20to%20help%20you.%20Is%20there%20something%20specific%20you%20need%20assistance%20with%3F&callSid=5223adb3-8351-4379-a830-f55b1b113cab"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 2,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/conversation [32m200[0m 1742.076 ms - 473[0m
+Streaming ElevenLabs audio for call 5223adb3-8351-4379-a830-f55b1b113cab: Yes, I'm here and ready to help you. Is there some...
+Completed streaming audio for: bc0209f2e8952c231b36cddfc77da058
+[0mHEAD /audio/stream/bc0209f2e8952c231b36cddfc77da058?text=Yes%2C%20I'm%20here%20and%20ready%20to%20help%20you%2E%20Is%20there%20something%20specific%20you%20need%20assistance%20with%3F&callSid=5223adb3-8351-4379-a830-f55b1b113cab [32m200[0m 1096.933 ms - -[0m
+Streaming ElevenLabs audio for call 5223adb3-8351-4379-a830-f55b1b113cab: Yes, I'm here and ready to help you. Is there some...
+Completed streaming audio for: bc0209f2e8952c231b36cddfc77da058
+[0mGET /audio/stream/bc0209f2e8952c231b36cddfc77da058?text=Yes%2C%20I'm%20here%20and%20ready%20to%20help%20you%2E%20Is%20there%20something%20specific%20you%20need%20assistance%20with%3F&callSid=5223adb3-8351-4379-a830-f55b1b113cab [32m200[0m 986.623 ms - -[0m
+
+=== CONVERSATION INPUT ===
+User said: I would like you to tell me a joke.
+Generating AI response...
+AI response: Of course, I'd be happy to lighten the mood! Here's one for you: Why don't scientists trust atoms? Because they make up everything!
+Using ElevenLabs streaming audio: https://talk.mvp-scale.com/audio/stream/6384b5f19c50d8197cbfda307b5ae2a9?text=Of%20course%2C%20I'd%20be%20happy%20to%20lighten%20the%20mood!%20Here's%20one%20for%20you%3A%20Why%20don't%20scientists%20trust%20atoms%3F%20Because%20they%20make%20up%20everything!&callSid=5223adb3-8351-4379-a830-f55b1b113cab
+Sending TTS test response: [
+  {
+    "verb": "play",
+    "url": "https://talk.mvp-scale.com/audio/stream/6384b5f19c50d8197cbfda307b5ae2a9?text=Of%20course%2C%20I'd%20be%20happy%20to%20lighten%20the%20mood!%20Here's%20one%20for%20you%3A%20Why%20don't%20scientists%20trust%20atoms%3F%20Because%20they%20make%20up%20everything!&callSid=5223adb3-8351-4379-a830-f55b1b113cab"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 2,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/conversation [32m200[0m 1827.190 ms - 530[0m
+Streaming ElevenLabs audio for call 5223adb3-8351-4379-a830-f55b1b113cab: Of course, I'd be happy to lighten the mood! Here'...
+Completed streaming audio for: 6384b5f19c50d8197cbfda307b5ae2a9
+[0mHEAD /audio/stream/6384b5f19c50d8197cbfda307b5ae2a9?text=Of%20course%2C%20I'd%20be%20happy%20to%20lighten%20the%20mood!%20Here's%20one%20for%20you%3A%20Why%20don't%20scientists%20trust%20atoms%3F%20Because%20they%20make%20up%20everything!&callSid=5223adb3-8351-4379-a830-f55b1b113cab [32m200[0m 1448.413 ms - -[0m
+Streaming ElevenLabs audio for call 5223adb3-8351-4379-a830-f55b1b113cab: Of course, I'd be happy to lighten the mood! Here'...
+Completed streaming audio for: 6384b5f19c50d8197cbfda307b5ae2a9
+[0mGET /audio/stream/6384b5f19c50d8197cbfda307b5ae2a9?text=Of%20course%2C%20I'd%20be%20happy%20to%20lighten%20the%20mood!%20Here's%20one%20for%20you%3A%20Why%20don't%20scientists%20trust%20atoms%3F%20Because%20they%20make%20up%20everything!&callSid=5223adb3-8351-4379-a830-f55b1b113cab [32m200[0m 1383.374 ms - -[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: 5223adb3-8351-4379-a830-f55b1b113cab
+Status: completed
+[0mPOST /webhook/status [32m200[0m 0.393 ms - 2[0m
+[0mOPTIONS /webhook/call [32m200[0m 0.521 ms - 4[0m

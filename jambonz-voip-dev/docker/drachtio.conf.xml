@@ -1,0 +1,33 @@
+<drachtio>
+  <admin port="9022" secret="cymru"/>
+  
+  <sip>
+    <contacts>
+      <contact>0.0.0.0:5060</contact>
+    </contacts>
+    <timers>
+      <session-expires>1800</session-expires>
+      <min-se>90</min-se>
+    </timers>
+  </sip>
+
+  <sofia>
+    <sip-port>5060</sip-port>
+    <sip-port-tcp>5060</sip-port-tcp>
+    <tls-port>5061</tls-port>
+    <dtls-port>5061</dtls-port>
+    <mtu>4096</mtu>
+    <capturing>homer</capturing>
+    <loglevel>3</loglevel>
+    
+    <aliases>
+      <alias>localhost</alias>
+      <alias>127.0.0.1</alias>
+    </aliases>
+  </sofia>
+
+  <logging>
+    <sofia-loglevel>3</sofia-loglevel>
+    <loglevel>info</loglevel>
+  </logging>
+</drachtio>

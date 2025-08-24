@@ -1,0 +1,16 @@
+jambonz-voip-dev/.env
+_upload/image.png
+
+# Node.js dependencies
+node_modules/
+*/node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files with secrets
+.env
+*/.env
+**/.env
+*.env

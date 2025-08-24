@@ -1,0 +1,9 @@
+{
+  "name": "sip-header-injector",
+  "version": "1.0.0",
+  "description": "SIP proxy to inject X-Account-Sid header",
+  "main": "index.js",
+  "dependencies": {
+    "drachtio-srf": "^4.5.0"
+  }
+}

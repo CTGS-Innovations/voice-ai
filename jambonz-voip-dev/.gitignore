@@ -1,0 +1,80 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Node modules
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Database files
+database/*.sql
+*.sql
+
+# Docker volumes
+mysql_data/
+redis_data/
+
+# Logs
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ngrok
+ngrok
+ngrok.yml
+
+# Google credentials (sensitive)
+app/config/google-service-account.json
+app/config/*.json
+
+# Build outputs
+dist/
+build/
+*.tgz
+
+# Test coverage
+coverage/
+.nyc_output/
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Docker override files
+docker-compose.override.yml
+docker-compose.*.yml
+
+# Backup files
+*.backup
+*.bak
+*.old
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# Keep .env.example
+!.env.example

@@ -1,0 +1,176 @@
+
+========================================
+Jambonz Webhook Server Started
+========================================
+Port: 3003
+URL: http://localhost:3003
+
+Webhook endpoints:
+  - Call webhook: http://localhost:3003/webhook/call
+  - Status webhook: http://localhost:3003/webhook/status
+
+Integrations:
+  - OpenAI: Configured ✓
+  - ElevenLabs: Configured ✓
+========================================
+
+=== NEW INCOMING CALL ===
+Call SID: 6167d655-6415-4405-85b7-6d23e4dd284b
+From: 4133984849
+To: 4137524849
+Sending initial TTS test: [
+  {
+    "verb": "say",
+    "text": "Hello! This is a test using default TTS. Can you hear this message?"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 3,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/call [32m200[0m 2.392 ms - 293[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: 6167d655-6415-4405-85b7-6d23e4dd284b
+Status: trying
+[0mPOST /webhook/status [32m200[0m 0.757 ms - 2[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: 6167d655-6415-4405-85b7-6d23e4dd284b
+Status: in-progress
+[0mPOST /webhook/status [32m200[0m 0.554 ms - 2[0m
+
+=== CONVERSATION INPUT ===
+User said: Is it working?
+Generating AI response...
+AI response: Yes, everything is working perfectly! How can I assist you today?
+Sending TTS test response: [
+  {
+    "verb": "play",
+    "url": "https://www2.cs.uic.edu/~i101/SoundFiles/BabyElephantWalk60.wav"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 2,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/conversation [32m200[0m 1337.098 ms - 289[0m
+
+=== CONVERSATION INPUT ===
+User said: Is it working?
+Generating AI response...
+
+=== CALL STATUS UPDATE ===
+Call SID: 6167d655-6415-4405-85b7-6d23e4dd284b
+Status: completed
+[0mPOST /webhook/status [32m200[0m 0.686 ms - 2[0m
+AI response: Yes, it's all systems go! What can I help you with today?
+Sending TTS test response: [
+  {
+    "verb": "play",
+    "url": "https://www2.cs.uic.edu/~i101/SoundFiles/BabyElephantWalk60.wav"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 2,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/conversation [32m200[0m 1316.111 ms - 289[0m
+[0mGET /health [32m200[0m 0.747 ms - 83[0m
+=== NEW INCOMING CALL ===
+Call SID: aeb8e42e-e732-4e7f-9b01-521693e4820e
+From: 4133984849
+To: 4137524849
+Sending initial TTS test: [
+  {
+    "verb": "say",
+    "text": "Hello! This is a test using default TTS. Can you hear this message?"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 3,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/call [32m200[0m 0.511 ms - 293[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: aeb8e42e-e732-4e7f-9b01-521693e4820e
+Status: trying
+[0mPOST /webhook/status [32m200[0m 0.679 ms - 2[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: aeb8e42e-e732-4e7f-9b01-521693e4820e
+Status: in-progress
+[0mPOST /webhook/status [32m200[0m 0.576 ms - 2[0m
+
+=== CONVERSATION INPUT ===
+User said: as you're working.
+Generating AI response...
+AI response: Of course, I'm always ready to assist you. What would you like help with today?
+Sending TTS test response: [
+  {
+    "verb": "play",
+    "url": "https://www2.cs.uic.edu/~i101/SoundFiles/BabyElephantWalk60.wav"
+  },
+  {
+    "verb": "gather",
+    "input": [
+      "speech"
+    ],
+    "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+    "timeout": 15,
+    "speechTimeout": 2,
+    "recognizer": {
+      "vendor": "openai",
+      "model": "whisper-1",
+      "language": "en"
+    }
+  }
+]
+[0mPOST /webhook/conversation [32m200[0m 1344.593 ms - 289[0m
+
+=== CALL STATUS UPDATE ===
+Call SID: aeb8e42e-e732-4e7f-9b01-521693e4820e
+Status: completed
+[0mPOST /webhook/status [32m200[0m 0.523 ms - 2[0m
+[0mGET /health [32m200[0m 0.400 ms - 83[0m
