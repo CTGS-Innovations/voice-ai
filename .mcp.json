@@ -41,6 +41,41 @@
         "mcp-remote",
         "https://gitmcp.io/drachtio/drachtio-server"
       ]
+    },
+    "systran-faster-whisper": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/SYSTRAN/faster-whisper"
+      ]
+    },
+    "coqui-tts": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/coqui-ai/TTS"
+      ]
+    },
+    "whisper-asr-webservice": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/ahmetoner/whisper-asr-webservice"
+      ]
+    },
+    "openai-whisper": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/openai/whisper"
+      ]
+    },
+    "ollama": {
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "https://gitmcp.io/ollama/ollama"
+      ]
     }
   }
 }

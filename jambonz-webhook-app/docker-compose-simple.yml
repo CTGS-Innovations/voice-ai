@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # Ollama Service (Easy Model Management)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ./models/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - gpu-network
+
+  # Main Webhook Application (GPU-enabled)
+  gpu-webhook-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: jambonz-gpu-webhook
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      # GPU Service URLs
+      - OLLAMA_URL=http://ollama:11434
+      
+      # Configuration
+      - PORT=3003
+      - NODE_ENV=production
+      
+      # Model preferences
+      - OLLAMA_MODEL=llama3.1:8b
+      
+      # Fallback API keys
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+    volumes:
+      - ./:/app
+      - ./audio-gpu:/app/audio-gpu
+    ports:
+      - "3003:3003"
+    working_dir: /app
+    command: node open-source.js
+    networks:
+      - gpu-network
+
+networks:
+  gpu-network:
+    driver: bridge
