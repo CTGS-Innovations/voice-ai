@@ -1,0 +1,94 @@
+{
+  "name": "open-source-voice-ai",
+  "version": "1.0.0",
+  "description": "100% Open Source GPU-Accelerated Voice AI Webhook Server for Jambonz",
+  "main": "src/voice-app.js",
+  "scripts": {
+    "start": "node src/voice-app.js",
+    "dev": "nodemon src/voice-app.js",
+    "test": "node test/test-services.js",
+    "docker:build": "docker build -t open-source-voice-ai .",
+    "docker:run": "docker run --rm -p 3003:3003 open-source-voice-ai",
+    "compose:up": "docker-compose up -d",
+    "compose:down": "docker-compose down",
+    "compose:logs": "docker-compose logs -f",
+    "setup": "node scripts/setup-check.js",
+    "health": "curl -f http://localhost:3003/health",
+    "metrics": "curl -s http://localhost:3003/metrics | jq .",
+    "lint": "eslint src/ --fix",
+    "format": "prettier --write src/**/*.js"
+  },
+  "keywords": [
+    "voice-ai",
+    "gpu",
+    "jambonz",
+    "webhook", 
+    "tts",
+    "stt",
+    "llm",
+    "open-source",
+    "self-hosted",
+    "nvidia",
+    "cuda",
+    "ollama",
+    "coqui",
+    "faster-whisper",
+    "vits"
+  ],
+  "author": "Open Source Voice AI Community",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-source-voice-ai/webhook-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/open-source-voice-ai/webhook-server/issues"
+  },
+  "homepage": "https://github.com/open-source-voice-ai/webhook-server#readme",
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1", 
+    "express": "^4.18.2",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "eslint": "^8.50.0",
+    "prettier": "^3.0.3"
+  },
+  "optionalDependencies": {
+    "form-data": "^4.0.0"
+  },
+  "config": {
+    "platform": {
+      "os": ["linux"],
+      "arch": ["x64"],
+      "gpu": ["nvidia-cuda"]
+    },
+    "services": {
+      "ollama": {
+        "url": "http://ollama:11434",
+        "models": ["llama3.1:8b", "phi3:mini", "mistral:7b"]
+      },
+      "coqui-tts": {
+        "url": "http://coqui-tts:5002", 
+        "model": "tts_models/en/vctk/vits",
+        "speakers": ["p225", "p226", "p227", "p228", "p229", "p230"]
+      },
+      "faster-whisper": {
+        "url": "http://faster-whisper:9000",
+        "models": ["base", "small", "medium", "large", "large-v2", "large-v3"]
+      }
+    }
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ]
+}

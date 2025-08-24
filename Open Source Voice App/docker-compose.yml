@@ -1,0 +1,319 @@
+# =============================================================================
+# 100% OPEN SOURCE GPU-ACCELERATED VOICE AI STACK
+# =============================================================================
+# 
+# This Docker Compose configuration deploys a complete open-source voice AI 
+# system using only free, self-hosted components running on NVIDIA GPU hardware.
+# 
+# COMPONENTS:
+# - Faster-Whisper: GPU speech-to-text recognition (NVIDIA/OpenAI Whisper)
+# - Coqui TTS VITS: Production-quality neural text-to-speech 
+# - Ollama: Local LLM inference (Llama 3.1 8B)
+# - Voice Webhook App: Jambonz-compatible webhook server
+#
+# HARDWARE REQUIREMENTS:
+# - NVIDIA GPU with CUDA 11.8+ support
+# - 8GB+ GPU memory (recommended for Llama 3.1 8B)
+# - Docker with NVIDIA Container Toolkit installed
+#
+# =============================================================================
+
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------------------------
+  # FASTER-WHISPER - GPU SPEECH-TO-TEXT RECOGNITION
+  # ---------------------------------------------------------------------------
+  # High-performance speech recognition using optimized Whisper models
+  # Provides 3x+ speedup over standard OpenAI Whisper implementation
+  #
+  # Configuration Options:
+  # - ASR_MODEL: base, small, medium, large, large-v2, large-v3 (accuracy vs speed)
+  # - ASR_ENGINE: faster_whisper (recommended) or openai_whisper
+  # - CUDA acceleration automatically enabled for GPU containers
+  # 
+  # API Endpoint: http://faster-whisper:9000/asr
+  # API Format: POST multipart/form-data with 'audio_file' field
+  faster-whisper:
+    image: onerahmet/openai-whisper-asr-webservice:latest-gpu
+    container_name: voice-ai-whisper
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      
+      # Model Selection (base=fastest, large-v3=most accurate)
+      # Options: tiny, base, small, medium, large, large-v2, large-v3
+      - ASR_MODEL=base
+      
+      # Engine Selection
+      # faster_whisper = 3x+ speedup, openai_whisper = standard implementation
+      - ASR_ENGINE=faster_whisper
+    ports:
+      # Speech recognition API endpoint
+      - "9000:9000"
+    networks:
+      - voice-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # COQUI TTS VITS - PRODUCTION NEURAL TEXT-TO-SPEECH
+  # ---------------------------------------------------------------------------
+  # High-quality neural text-to-speech using VITS (Variational Inference with 
+  # adversarial learning for end-to-end Text-to-Speech) architecture
+  #
+  # VITS Features:
+  # - End-to-end neural synthesis (no vocoder needed)
+  # - 67x real-time factor on GPU
+  # - Multiple speaker voices available
+  # - 22kHz audio output quality
+  #
+  # Available Models:
+  # - tts_models/en/vctk/vits (multi-speaker English, used here)
+  # - tts_models/en/ljspeech/vits (single speaker)
+  # - tts_models/multilingual/multi-dataset/your_tts (multilingual)
+  #
+  # Speaker Options for VCTK model:
+  # - p225 (female, young, English)
+  # - p226 (male, young, English)  
+  # - p227 (male, young, English)
+  # - p228 (female, young, English)
+  # - p229 (female, young, English)
+  # - p230 (female, young, English)
+  # ... and many more (110+ speakers available)
+  coqui-tts:
+    image: ghcr.io/coqui-ai/tts
+    container_name: voice-ai-tts
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      # Persist downloaded models to avoid re-downloading
+      - coqui-models:/root/.local/share/tts
+    ports:
+      # TTS API endpoint
+      - "5002:5002"
+    networks:
+      - voice-ai-network
+    # Model Configuration:
+    # --model_name: Specifies which TTS model to load
+    # --use_cuda: Enable GPU acceleration (true/false)
+    # --port: Server port (default 5002)
+    entrypoint: [
+      "python3", "TTS/server/server.py", 
+      "--model_name", "tts_models/en/vctk/vits",
+      "--use_cuda", "true", 
+      "--port", "5002"
+    ]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # OLLAMA - LOCAL LLM INFERENCE ENGINE
+  # ---------------------------------------------------------------------------
+  # Self-hosted large language model inference using optimized GGUF models
+  # Provides conversational AI capabilities without external API dependencies
+  #
+  # Supported Models (examples):
+  # - llama3.1:8b (recommended, good balance of quality/speed)
+  # - llama3.1:70b (highest quality, requires 40GB+ VRAM)
+  # - phi3:mini (3.8B params, fastest for low-end GPUs)
+  # - codellama:7b (specialized for code generation)
+  # - mistral:7b (efficient alternative to Llama)
+  #
+  # Configuration Options:
+  # - OLLAMA_HOST: Bind address (0.0.0.0 for container access)
+  # - Models are downloaded on first use via API calls
+  ollama:
+    image: ollama/ollama:latest
+    container_name: voice-ai-llm
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      
+      # Network Configuration
+      # 0.0.0.0 allows access from other containers
+      - OLLAMA_HOST=0.0.0.0
+      
+      # Optional: Limit concurrent requests (default: unlimited)
+      # - OLLAMA_MAX_LOADED_MODELS=1
+      
+      # Optional: Set model loading timeout (default: 5m)
+      # - OLLAMA_LOAD_TIMEOUT=10m
+    volumes:
+      # Persist downloaded models (can be 4GB+ per model)
+      - ollama-data:/root/.ollama
+    ports:
+      # Ollama API endpoint
+      - "11434:11434"
+    networks:
+      - voice-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ---------------------------------------------------------------------------
+  # VOICE AI WEBHOOK APPLICATION
+  # ---------------------------------------------------------------------------
+  # Jambonz-compatible webhook server that orchestrates the complete voice AI pipeline:
+  # 1. Receives incoming call webhooks from Jambonz
+  # 2. Processes speech recognition via Faster-Whisper
+  # 3. Generates AI responses via Ollama 
+  # 4. Synthesizes speech via Coqui TTS
+  # 5. Returns Jambonz-compatible webhook responses
+  #
+  # Features:
+  # - 100% open-source processing (no external APIs)
+  # - Performance monitoring and metrics
+  # - Audio file caching and cleanup
+  # - Error handling with graceful fallbacks
+  # - Multi-speaker TTS support
+  # - Conversation history management
+  voice-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: voice-ai-webhook
+    restart: unless-stopped
+    depends_on:
+      - ollama
+      - faster-whisper
+      - coqui-tts
+    environment:
+      # Server Configuration
+      - PORT=3003
+      - NODE_ENV=production
+      
+      # GPU Service Endpoints (internal Docker network)
+      - OLLAMA_URL=http://ollama:11434
+      - FASTER_WHISPER_URL=http://faster-whisper:9000
+      - COQUI_TTS_URL=http://coqui-tts:5002
+      
+      # LLM Configuration
+      # Available models: llama3.1:8b, llama3.1:70b, phi3:mini, mistral:7b
+      - OLLAMA_MODEL=llama3.1:8b
+      
+      # TTS Configuration
+      # VITS Speaker Selection (p225=female, p226=male, etc.)
+      - VITS_SPEAKER_ID=p225
+      
+      # Audio Processing
+      - AUDIO_CACHE_HOURS=1
+      - MAX_CONVERSATION_HISTORY=10
+      
+      # Performance Tuning
+      - LLM_TEMPERATURE=0.7
+      - LLM_MAX_TOKENS=100
+      - TTS_TIMEOUT_MS=30000
+      - STT_TIMEOUT_MS=8000
+      
+      # Webhook Configuration (update with your Jambonz server URL)
+      # - WEBHOOK_BASE_URL=https://your-domain.com
+      
+      # Optional: Enable debug logging
+      # - DEBUG=voice-ai:*
+    volumes:
+      # Application source code (for development)
+      - ./src:/app/src
+      # Audio file storage (persistent across restarts)
+      - ./audio-cache:/app/audio-cache
+      # Logs (optional)
+      - ./logs:/app/logs
+    ports:
+      # Webhook server port
+      - "3003:3003"
+    working_dir: /app
+    command: node src/voice-app.js
+    networks:
+      - voice-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# =============================================================================
+# NETWORK CONFIGURATION
+# =============================================================================
+# Custom bridge network allows secure inter-container communication
+# All services can reach each other using container names as hostnames
+networks:
+  voice-ai-network:
+    driver: bridge
+    name: voice-ai-network
+
+# =============================================================================
+# VOLUME CONFIGURATION  
+# =============================================================================
+# Persistent storage for models and data
+volumes:
+  # Ollama model storage (4GB+ per model)
+  ollama-data:
+    name: voice-ai-ollama-data
+    
+  # Coqui TTS model storage (500MB+ per model)
+  coqui-models:
+    name: voice-ai-coqui-models
+
+# =============================================================================
+# DEPLOYMENT NOTES
+# =============================================================================
+#
+# 1. PREREQUISITES:
+#    - Docker & Docker Compose installed
+#    - NVIDIA Container Toolkit configured
+#    - GPU with 8GB+ VRAM recommended
+#
+# 2. FIRST RUN:
+#    docker-compose up -d
+#    # Models will download automatically (may take 10-15 minutes)
+#
+# 3. DOWNLOADING LLM MODEL:
+#    docker exec voice-ai-llm ollama pull llama3.1:8b
+#
+# 4. TESTING:
+#    curl -X POST http://localhost:3003/webhook/call \
+#      -H "Content-Type: application/json" \
+#      -d '{"call_sid": "test", "from": "+1234567890", "to": "+1987654321"}'
+#
+# 5. MONITORING:
+#    docker-compose logs -f voice-app
+#    curl http://localhost:3003/metrics
+#
+# 6. CONFIGURATION:
+#    Edit environment variables above or create .env file
+#
+# =============================================================================
