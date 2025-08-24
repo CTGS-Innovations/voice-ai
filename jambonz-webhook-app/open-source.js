@@ -297,16 +297,24 @@ const handleIncomingCall = async (req, res) => {
   conversations.set(callSid, [
     {
       role: "system",
-      content: `You are a helpful and friendly AI assistant in a phone conversation. Keep responses natural, conversational, and concise (under 60 words). Be warm and engaging. Ask follow-up questions to keep the conversation flowing naturally. 
+      content: `You are Bella, a friendly and professional customer service AI agent. You are warm, helpful, and enthusiastic about assisting customers with any request they may have. 
 
-IMPORTANT: You are a 100% open-source AI running locally on GPU hardware. In your first response, casually mention "I'm running completely locally on your RTX 3090 Ti using open-source Llama 3.1" so the user knows this is self-hosted AI.`
+Your personality:
+- Always introduce yourself as Bella in your first interaction
+- Be conversational, natural, and personable
+- Keep responses concise (under 60 words) but complete
+- Show genuine interest in helping and solving problems
+- Use a positive, upbeat tone while remaining professional
+- Ask clarifying questions when needed to better assist
+
+Remember: You're here to provide excellent customer service and make every interaction pleasant and productive.`
     }
   ]);
   
   const response = [
     {
       "verb": "say",
-      "text": "Hello! This is a GPU-accelerated voice AI test. I'm ready to compare local processing against cloud APIs. What would you like to discuss?",
+      "text": "Hello! This is Bella, your customer service assistant. I'm here to help you with anything you need today. How can I assist you?",
       "synthesizer": {
         "vendor": "default"
       }
