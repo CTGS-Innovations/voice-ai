@@ -1,8 +1,8 @@
-# 🎯 100% Open Source GPU Voice AI
+# OpenSourceVoice - 100% Local GPU Voice AI Stack
 
-**Enterprise-grade voice AI system using only open-source, self-hosted components**
+**Complete Docker Compose solution for AI-powered voice applications with Jambonz integration**
 
-Transform your hardware into a powerful voice AI platform that rivals cloud services while maintaining complete data privacy and control.
+A containerized voice AI stack that runs entirely on local GPU hardware with no external API dependencies. Provides speech-to-text, text-to-speech, and conversational AI capabilities for telephony applications.
 
 ## 🌟 Features
 
@@ -75,41 +75,46 @@ docker run --rm --gpus all nvidia/cuda:11.8-base-ubuntu20.04 nvidia-smi
 ### 2. Deploy the Voice AI Stack
 
 ```bash
-# Clone or create the project directory
-mkdir open-source-voice-ai && cd open-source-voice-ai
+# Start all GPU services
+docker compose up -d
 
-# Copy the files from this package
-# (docker-compose.yml, src/voice-app.js, Dockerfile, package.json, .env.example)
+# Monitor startup - wait for all services to be healthy
+docker compose logs -f
 
-# Configure environment
-cp .env.example .env
-nano .env  # Edit WEBHOOK_BASE_URL and other settings
-
-# Start all services
-docker-compose up -d
-
-# Monitor startup (models will download automatically)
-docker-compose logs -f
+# Download LLM model (if not already downloaded)
+docker exec voice-ai-llm ollama pull llama3.1:8b
 ```
 
-### 3. Download AI Models
+### 3. Verify Installation
 
 ```bash
-# Download Llama 3.1 8B model (~4.7GB)
-docker exec voice-ai-llm ollama pull llama3.1:8b
+# Check all services are healthy
+docker compose ps
 
-# Verify all services are ready
+# Test webhook server
 curl http://localhost:3003/health
+
+# Test initial call webhook
+curl -X POST http://localhost:3003/webhook/call \
+  -H "Content-Type: application/json" \
+  -d '{"call_sid":"test","from":"+1234567890","to":"+1987654321"}'
 ```
 
 ## 📊 Service Endpoints
 
-| Service | URL | Purpose |
-|---------|-----|---------|
-| **Webhook Server** | `http://localhost:3003` | Main application |
-| **Ollama (LLM)** | `http://localhost:11434` | Language model inference |
-| **Coqui TTS** | `http://localhost:5002` | Text-to-speech synthesis |
-| **Faster-Whisper** | `http://localhost:9000` | Speech recognition |
+| Service | URL | Purpose | Status |
+|---------|-----|---------|---------|
+| **Webhook Server** | `http://localhost:3003` | Jambonz integration | Primary |
+| **Ollama (LLM)** | `http://localhost:11435` | Language model inference | GPU Required |
+| **Coqui TTS** | `http://localhost:5002` | Text-to-speech synthesis | GPU Required |
+| **Faster-Whisper** | `http://localhost:9000` | Speech recognition | GPU Required |
+
+### Key Webhook Endpoints
+- **Call Handler**: `POST /webhook/call` - Handles incoming calls
+- **Conversation**: `POST /webhook/conversation` - Processes speech input  
+- **Status Updates**: `POST /webhook/status` - Call status notifications
+- **Health Check**: `GET /health` - Service health monitoring
+- **Audio Files**: `GET /audio/generated/:id` - Serves generated TTS audio
 
 ## 🔧 Configuration Options
 
@@ -146,32 +151,31 @@ VITS_SPEAKER_ID=p226  # Male voice
 
 ## 📞 Jambonz Integration
 
-### Webhook Configuration
+### Jambonz Application Configuration
 
-Configure your Jambonz application to use these webhooks:
+Configure your Jambonz application to point to this webhook server:
 
-```javascript
-// Jambonz Application Configuration
+```json
 {
-  \"name\": \"Open Source Voice AI\",
-  \"call_hook\": {
-    \"url\": \"https://your-domain.com/webhook/call\",
-    \"method\": \"POST\"
+  "name": "Open Source Voice AI",
+  "call_hook": {
+    "url": "https://your-domain.com/webhook/call",
+    "method": "POST"
   },
-  \"call_status_hook\": {
-    \"url\": \"https://your-domain.com/webhook/status\",
-    \"method\": \"POST\"
+  "call_status_hook": {
+    "url": "https://your-domain.com/webhook/status", 
+    "method": "POST"
   }
 }
 ```
 
-### Webhook Endpoints
+**Important**: Replace `your-domain.com` with your actual domain or use ngrok for local testing.
 
-| Endpoint | Method | Purpose | Jambonz Event |
-|----------|--------|---------|---------------|
-| `/webhook/call` | POST | Handle new calls | `call-attempt` |
-| `/webhook/conversation` | POST | Process user speech | `gather` results |
-| `/webhook/status` | POST | Call status updates | Status changes |
+### Call Flow
+1. **Incoming Call** → `/webhook/call` generates AI greeting using GPU TTS
+2. **User Speech** → Captured and sent to `/webhook/conversation` 
+3. **AI Processing** → Speech → Ollama LLM → Coqui TTS → Audio response
+4. **Audio Playback** → Generated audio file served via `verb: "play"`
 
 ## 🔍 Monitoring & Debugging
 

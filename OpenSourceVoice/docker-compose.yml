@@ -18,8 +18,6 @@
 #
 # =============================================================================
 
-version: '3.8'
-
 services:
   # ---------------------------------------------------------------------------
   # FASTER-WHISPER - GPU SPEECH-TO-TEXT RECOGNITION
@@ -62,10 +60,11 @@ services:
     networks:
       - voice-ai-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 60s
 
   # ---------------------------------------------------------------------------
   # COQUI TTS VITS - PRODUCTION NEURAL TEXT-TO-SPEECH
@@ -107,6 +106,8 @@ services:
       # GPU Configuration
       - NVIDIA_VISIBLE_DEVICES=all
       - CUDA_VISIBLE_DEVICES=0
+      # Auto-accept XTTS v2 license for non-commercial use
+      - TTS_AGREE_LICENSE=1
     volumes:
       # Persist downloaded models to avoid re-downloading
       - coqui-models:/root/.local/share/tts
@@ -130,6 +131,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 90s
 
   # ---------------------------------------------------------------------------
   # OLLAMA - LOCAL LLM INFERENCE ENGINE
@@ -175,15 +177,16 @@ services:
       # Persist downloaded models (can be 4GB+ per model)
       - ollama-data:/root/.ollama
     ports:
-      # Ollama API endpoint
-      - "11434:11434"
+      # Ollama API endpoint (using 11435 to avoid conflicts)
+      - "11435:11434"
     networks:
       - voice-ai-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 30s
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 15s
       timeout: 10s
       retries: 3
+      start_period: 30s
 
   # ---------------------------------------------------------------------------
   # VOICE AI WEBHOOK APPLICATION
@@ -209,9 +212,14 @@ services:
     container_name: voice-ai-webhook
     restart: unless-stopped
     depends_on:
-      - ollama
-      - faster-whisper
-      - coqui-tts
+      ollama:
+        condition: service_healthy
+      faster-whisper:
+        condition: service_started
+      coqui-tts:
+        condition: service_started
+    env_file:
+      - .env
     environment:
       # Server Configuration
       - PORT=3003
@@ -241,15 +249,13 @@ services:
       - STT_TIMEOUT_MS=8000
       
       # Webhook Configuration (update with your Jambonz server URL)
-      # - WEBHOOK_BASE_URL=https://your-domain.com
+      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-http://voice-app:3003}
       
       # Optional: Enable debug logging
       # - DEBUG=voice-ai:*
     volumes:
       # Application source code (for development)
       - ./src:/app/src
-      # Audio file storage (persistent across restarts)
-      - ./audio-cache:/app/audio-cache
       # Logs (optional)
       - ./logs:/app/logs
     ports:

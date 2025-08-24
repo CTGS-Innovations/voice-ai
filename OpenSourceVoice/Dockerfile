@@ -60,7 +60,8 @@ COPY --chown=voiceai:voiceai package*.json ./
 
 # Create required directories with proper permissions
 RUN mkdir -p /app/audio-cache /app/logs && \
-    chown -R voiceai:voiceai /app
+    chown -R voiceai:voiceai /app && \
+    chmod -R 755 /app/audio-cache
 
 # Switch to non-root user
 USER voiceai
