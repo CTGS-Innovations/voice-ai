@@ -1,0 +1,42 @@
+FROM node:18-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    curl \
+    wget \
+    build-essential \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install additional Node.js dependencies
+RUN npm install -g pm2
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install Node.js dependencies
+RUN npm install
+
+# Install additional dependencies for GPU processing
+RUN npm install axios form-data
+
+# Copy application files
+COPY . .
+
+# Create audio directory
+RUN mkdir -p /app/audio-gpu
+
+# Expose port
+EXPOSE 3004
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:3004/gpu/health || exit 1
+
+# Start the application
+CMD ["node", "open-source.js"]

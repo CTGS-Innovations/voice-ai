@@ -25,6 +25,14 @@ const conversations = new Map();
 // Store generated audio files
 const audioCache = new Map();
 
+// Performance testing data
+const performanceMetrics = new Map();
+let testMode = {
+  enabled: true,
+  currentMethod: 'streaming', // 'streaming' or 'non-streaming'
+  alternatePerCall: true
+};
+
 // Directory for audio files
 const AUDIO_DIR = '/home/corey/voice-ai/audio';
 
@@ -39,10 +47,12 @@ async function ensureAudioDir() {
 
 // Generate audio using ElevenLabs
 async function generateElevenLabsAudio(text, callSid) {
+  const generateStartTime = Date.now();
   const audioId = crypto.randomBytes(16).toString('hex');
   const audioPath = path.join(AUDIO_DIR, `${audioId}.mp3`);
   
-  console.log(`Generating ElevenLabs audio for call ${callSid}: ${text.substring(0, 50)}...`);
+  console.log(`🎵 NON-STREAM GENERATION: ${callSid} - ${text.substring(0, 30)}...`);
+  const elevenLabsStartTime = Date.now();
   
   try {
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`, {
@@ -53,7 +63,7 @@ async function generateElevenLabsAudio(text, callSid) {
       },
       body: JSON.stringify({
         text: text,
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_turbo_v2',
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75
@@ -65,8 +75,15 @@ async function generateElevenLabsAudio(text, callSid) {
       throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText}`);
     }
     
+    console.log(`⏱️  ELEVENLABS RESPONDED: +${Date.now() - elevenLabsStartTime}ms`);
+    const bufferStartTime = Date.now();
+    
     const audioBuffer = await response.arrayBuffer();
+    console.log(`⏱️  AUDIO BUFFER READY: +${Date.now() - bufferStartTime}ms`);
+    
+    const writeStartTime = Date.now();
     await fs.writeFile(audioPath, Buffer.from(audioBuffer));
+    console.log(`⏱️  FILE WRITTEN: +${Date.now() - writeStartTime}ms`);
     
     // Cache the audio file info
     audioCache.set(audioId, {
@@ -75,10 +92,10 @@ async function generateElevenLabsAudio(text, callSid) {
       createdAt: Date.now()
     });
     
-    console.log(`Audio generated successfully: ${audioId}`);
+    console.log(`⏱️  NON-STREAM TOTAL: +${Date.now() - generateStartTime}ms - ${audioId}`);
     return audioId;
   } catch (error) {
-    console.error('Error generating ElevenLabs audio:', error);
+    console.error(`⏱️  NON-STREAM ERROR: +${Date.now() - generateStartTime}ms -`, error);
     throw error;
   }
 }
@@ -103,6 +120,48 @@ async function cleanupOldAudio() {
 // Start cleanup interval
 setInterval(cleanupOldAudio, 10 * 60 * 1000); // Every 10 minutes
 
+// Performance testing utilities
+function initializeCallPerformance(callSid) {
+  const method = testMode.alternatePerCall 
+    ? (testMode.currentMethod === 'streaming' ? 'non-streaming' : 'streaming')
+    : testMode.currentMethod;
+  
+  if (testMode.alternatePerCall) {
+    testMode.currentMethod = method;
+  }
+  
+  performanceMetrics.set(callSid, {
+    method: method,
+    startTime: Date.now(),
+    responses: [],
+    totalAudioTime: 0,
+    totalResponseTime: 0
+  });
+  
+  console.log(`Call ${callSid} assigned method: ${method}`);
+  return method;
+}
+
+function recordResponseTime(callSid, startTime, audioGenerationTime, textLength) {
+  const metrics = performanceMetrics.get(callSid);
+  if (!metrics) return;
+  
+  const totalTime = Date.now() - startTime;
+  const responseData = {
+    timestamp: new Date().toISOString(),
+    totalTime: totalTime,
+    audioGenerationTime: audioGenerationTime,
+    textLength: textLength,
+    wordsPerSecond: (textLength.split(' ').length / (totalTime / 1000)).toFixed(2)
+  };
+  
+  metrics.responses.push(responseData);
+  metrics.totalResponseTime += totalTime;
+  performanceMetrics.set(callSid, metrics);
+  
+  console.log(`${metrics.method} response - Total: ${totalTime}ms, Audio: ${audioGenerationTime}ms, WPS: ${responseData.wordsPerSecond}`);
+}
+
 // Main call webhook - handles incoming calls (root and specific path)
 const handleIncomingCall = async (req, res) => {
   console.log('=== NEW INCOMING CALL ===');
@@ -112,10 +171,14 @@ const handleIncomingCall = async (req, res) => {
   
   // Initialize conversation history for this call
   const callSid = req.body.call_sid;
+  const testMethod = initializeCallPerformance(callSid);
+  
   conversations.set(callSid, [
     {
       role: "system",
-      content: "You are a helpful and friendly AI assistant in a phone conversation. Keep responses natural, conversational, and concise (under 60 words). Be warm and engaging. Ask follow-up questions to keep the conversation flowing naturally."
+      content: `You are a helpful and friendly AI assistant in a phone conversation. Keep responses natural, conversational, and concise (under 60 words). Be warm and engaging. Ask follow-up questions to keep the conversation flowing naturally. 
+
+IMPORTANT: You are currently being tested using ${testMethod} audio delivery. In your first response, casually mention "I'm using ${testMethod} audio processing for this conversation" so we can track the difference in user experience.`
     }
   ]);
   
@@ -148,7 +211,9 @@ app.post('/webhook/call', handleIncomingCall);
 
 // Conversation webhook - handles speech input and AI responses
 app.post('/webhook/conversation', async (req, res) => {
+  const requestStartTime = Date.now();
   console.log('\n=== CONVERSATION INPUT ===');
+  console.log(`⏱️  REQUEST START: ${new Date().toISOString()}`);
   const callSid = req.body.call_sid;
   
   try {
@@ -157,12 +222,13 @@ app.post('/webhook/conversation', async (req, res) => {
     // Extract user speech
     if (req.body.speech && req.body.speech.alternatives && req.body.speech.alternatives[0]) {
       userMessage = req.body.speech.alternatives[0].transcript;
-      console.log('User said:', userMessage);
+      console.log(`⏱️  SPEECH-TO-TEXT COMPLETE: +${Date.now() - requestStartTime}ms`);
+      console.log('👤 USER SAID:', userMessage);
     }
     
     // Handle timeout or no speech
     if (!userMessage || req.body.reason === 'timeout') {
-      console.log('No speech detected or timeout');
+      console.log(`⏱️  NO SPEECH/TIMEOUT: +${Date.now() - requestStartTime}ms`);
       const response = [
         {
           "verb": "say",
@@ -183,6 +249,7 @@ app.post('/webhook/conversation', async (req, res) => {
           }
         }
       ];
+      console.log(`⏱️  RESPONSE SENT: +${Date.now() - requestStartTime}ms TOTAL`);
       return res.json(response);
     }
     
@@ -191,7 +258,7 @@ app.post('/webhook/conversation', async (req, res) => {
     const isGoodbye = goodbyePhrases.some(phrase => userMessage.toLowerCase().includes(phrase));
     
     if (isGoodbye) {
-      console.log('User said goodbye');
+      console.log(`⏱️  GOODBYE DETECTED: +${Date.now() - requestStartTime}ms`);
       const response = [
         {
           "verb": "say",
@@ -207,6 +274,7 @@ app.post('/webhook/conversation', async (req, res) => {
       
       // Clean up conversation history
       conversations.delete(callSid);
+      console.log(`⏱️  RESPONSE SENT: +${Date.now() - requestStartTime}ms TOTAL`);
       return res.json(response);
     }
     
@@ -224,18 +292,20 @@ app.post('/webhook/conversation', async (req, res) => {
       content: userMessage
     });
     
-    console.log('Generating AI response...');
+    console.log(`⏱️  CONVERSATION SETUP: +${Date.now() - requestStartTime}ms`);
+    const openaiStartTime = Date.now();
     
-    // Generate AI response using OpenAI
+    // Generate AI response using OpenAI (FASTEST AVAILABLE MODEL)
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: "gpt-4o-mini",
       messages: conversationHistory,
-      max_tokens: 100,
-      temperature: 0.8
+      max_tokens: 50,
+      temperature: 0.7
     });
     
     const aiResponse = completion.choices[0].message.content;
-    console.log('AI response:', aiResponse);
+    console.log(`⏱️  OPENAI COMPLETE: +${Date.now() - openaiStartTime}ms`);
+    console.log('🤖 AI RESPONSE:', aiResponse);
     
     // Add AI response to history
     conversationHistory.push({
@@ -255,31 +325,100 @@ app.post('/webhook/conversation', async (req, res) => {
       conversations.set(callSid, conversationHistory);
     }
     
-    // Generate ElevenLabs audio URL for streaming
-    const audioId = crypto.randomBytes(16).toString('hex');
-    const audioUrl = `https://talk.mvp-scale.com/audio/stream/${audioId}?text=${encodeURIComponent(aiResponse)}&callSid=${callSid}`;
-    console.log('Using ElevenLabs streaming audio:', audioUrl);
+    // Get test method for this call
+    const callMetrics = performanceMetrics.get(callSid);
+    const testMethod = callMetrics?.method || 'streaming';
+    console.log(`⏱️  USING METHOD: ${testMethod.toUpperCase()}`);
     
-    const response = [
-      {
-        "verb": "play",
-        "url": audioUrl
-      },
-      {
-        "verb": "gather",
-        "input": ["speech"],
-        "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
-        "timeout": 15,
-        "speechTimeout": 2,
-        "recognizer": {
-          "vendor": "openai",
-          "model": "whisper-1",
-          "language": "en"
+    let response;
+    const audioStartTime = Date.now();
+    
+    if (testMethod === 'streaming') {
+      // Streaming method - existing implementation
+      const audioId = crypto.randomBytes(16).toString('hex');
+      const audioUrl = `https://talk.mvp-scale.com/audio/stream/${audioId}?text=${encodeURIComponent(aiResponse)}&callSid=${callSid}`;
+      console.log(`⏱️  STREAMING AUDIO SETUP: +${Date.now() - audioStartTime}ms`);
+      
+      response = [
+        {
+          "verb": "play",
+          "url": audioUrl
+        },
+        {
+          "verb": "gather",
+          "input": ["speech"],
+          "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+          "timeout": 15,
+          "speechTimeout": 2,
+          "recognizer": {
+            "vendor": "openai",
+            "model": "whisper-1",
+            "language": "en"
+          }
         }
+      ];
+      
+      recordResponseTime(callSid, requestStartTime, Date.now() - audioStartTime, aiResponse);
+      
+    } else {
+      // Non-streaming method - generate audio first, then serve
+      console.log('⏱️  STARTING NON-STREAMING AUDIO GENERATION...');
+      
+      try {
+        const audioId = await generateElevenLabsAudio(aiResponse, callSid);
+        console.log(`⏱️  NON-STREAMING AUDIO COMPLETE: +${Date.now() - audioStartTime}ms`);
+        const audioUrl = `https://talk.mvp-scale.com/audio/generated/${audioId}.mp3`;
+        
+        response = [
+          {
+            "verb": "play",
+            "url": audioUrl
+          },
+          {
+            "verb": "gather",
+            "input": ["speech"],
+            "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+            "timeout": 15,
+            "speechTimeout": 2,
+            "recognizer": {
+              "vendor": "openai",
+              "model": "whisper-1",
+              "language": "en"
+            }
+          }
+        ];
+        
+        recordResponseTime(callSid, requestStartTime, Date.now() - audioStartTime, aiResponse);
+        
+      } catch (error) {
+        console.error(`⏱️  NON-STREAMING ERROR: +${Date.now() - audioStartTime}ms - Falling back to streaming:`, error);
+        // Fallback to streaming
+        const audioId = crypto.randomBytes(16).toString('hex');
+        const audioUrl = `https://talk.mvp-scale.com/audio/stream/${audioId}?text=${encodeURIComponent(aiResponse)}&callSid=${callSid}`;
+        
+        response = [
+          {
+            "verb": "play",
+            "url": audioUrl
+          },
+          {
+            "verb": "gather",
+            "input": ["speech"],
+            "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+            "timeout": 15,
+            "speechTimeout": 2,
+            "recognizer": {
+              "vendor": "openai",
+              "model": "whisper-1",
+              "language": "en"
+            }
+          }
+        ];
       }
-    ];
+    }
     
-    console.log('Sending TTS test response:', JSON.stringify(response, null, 2));
+    console.log(`⏱️  RESPONSE SENT: +${Date.now() - requestStartTime}ms TOTAL`);
+    console.log(`📊 BREAKDOWN: Request→OpenAI: +${Date.now() - requestStartTime - (Date.now() - audioStartTime)}ms | Audio: +${Date.now() - audioStartTime}ms`);
     res.json(response);
     
   } catch (error) {
@@ -329,12 +468,20 @@ app.post('/webhook/status-old', (req, res) => {
   console.log('Call SID:', req.body.call_sid);
   console.log('Status:', req.body.call_status);
   
-  // Clean up conversation history when call ends
+  // Clean up conversation history and performance metrics when call ends
   if (req.body.call_status === 'completed' || req.body.call_status === 'failed') {
     const callSid = req.body.call_sid;
     if (conversations.has(callSid)) {
       console.log('Cleaning up conversation history for call:', callSid);
       conversations.delete(callSid);
+    }
+    
+    // Keep performance metrics for analysis but mark as completed
+    if (performanceMetrics.has(callSid)) {
+      const metrics = performanceMetrics.get(callSid);
+      metrics.completedAt = new Date().toISOString();
+      metrics.callStatus = req.body.call_status;
+      console.log(`Call ${callSid} completed with ${metrics.responses.length} responses using ${metrics.method} method`);
     }
   }
   
@@ -364,6 +511,7 @@ app.get('/audio/generated/:filename', (req, res) => {
 
 // Stream ElevenLabs audio directly
 app.get('/audio/stream/:audioId', async (req, res) => {
+  const streamStartTime = Date.now();
   const { audioId } = req.params;
   const { text, callSid } = req.query;
   
@@ -371,7 +519,8 @@ app.get('/audio/stream/:audioId', async (req, res) => {
     return res.status(400).send('Text parameter required');
   }
   
-  console.log(`Streaming ElevenLabs audio for call ${callSid}: ${text.substring(0, 50)}...`);
+  console.log(`🎵 STREAM REQUEST: ${callSid} - ${text.substring(0, 30)}...`);
+  const elevenLabsStartTime = Date.now();
   
   try {
     const response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}/stream`, {
@@ -383,7 +532,7 @@ app.get('/audio/stream/:audioId', async (req, res) => {
       },
       body: JSON.stringify({
         text: text,
-        model_id: 'eleven_monolingual_v1',
+        model_id: 'eleven_turbo_v2',
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75
@@ -395,6 +544,8 @@ app.get('/audio/stream/:audioId', async (req, res) => {
       throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText}`);
     }
     
+    console.log(`⏱️  ELEVENLABS RESPONDED: +${Date.now() - elevenLabsStartTime}ms`);
+    
     // Set appropriate headers for audio streaming
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Disposition', 'inline');
@@ -402,28 +553,106 @@ app.get('/audio/stream/:audioId', async (req, res) => {
     
     // Pipe the audio stream directly to the response
     const reader = response.body.getReader();
+    let firstChunkTime = null;
     
     const pump = async () => {
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
+          
+          if (!firstChunkTime) {
+            firstChunkTime = Date.now();
+            console.log(`⏱️  FIRST AUDIO CHUNK: +${firstChunkTime - elevenLabsStartTime}ms`);
+          }
+          
           res.write(Buffer.from(value));
         }
         res.end();
       } catch (error) {
-        console.error('Error streaming audio:', error);
+        console.error('⏱️  STREAMING ERROR:', error);
         res.status(500).end();
       }
     };
     
     await pump();
-    console.log(`Completed streaming audio for: ${audioId}`);
+    console.log(`⏱️  STREAM COMPLETE: +${Date.now() - streamStartTime}ms TOTAL`);
     
   } catch (error) {
-    console.error('Error streaming ElevenLabs audio:', error);
+    console.error(`⏱️  STREAM ERROR: +${Date.now() - streamStartTime}ms -`, error);
     res.status(500).send('Error generating audio');
   }
+});
+
+// Performance metrics endpoint
+app.get('/metrics', (req, res) => {
+  const allMetrics = Array.from(performanceMetrics.entries());
+  const streamingMetrics = allMetrics.filter(([_, data]) => data.method === 'streaming');
+  const nonStreamingMetrics = allMetrics.filter(([_, data]) => data.method === 'non-streaming');
+  
+  const calculateStats = (metrics) => {
+    if (metrics.length === 0) return null;
+    
+    const allResponses = metrics.flatMap(([_, data]) => data.responses);
+    if (allResponses.length === 0) return null;
+    
+    const totalTimes = allResponses.map(r => r.totalTime);
+    const audioTimes = allResponses.map(r => r.audioGenerationTime);
+    const wpsValues = allResponses.map(r => parseFloat(r.wordsPerSecond));
+    
+    return {
+      callCount: metrics.length,
+      responseCount: allResponses.length,
+      avgTotalTime: Math.round(totalTimes.reduce((a, b) => a + b, 0) / totalTimes.length),
+      avgAudioTime: Math.round(audioTimes.reduce((a, b) => a + b, 0) / audioTimes.length),
+      avgWordsPerSecond: parseFloat((wpsValues.reduce((a, b) => a + b, 0) / wpsValues.length).toFixed(2)),
+      minTotalTime: Math.min(...totalTimes),
+      maxTotalTime: Math.max(...totalTimes)
+    };
+  };
+  
+  const streamingStats = calculateStats(streamingMetrics);
+  const nonStreamingStats = calculateStats(nonStreamingMetrics);
+  
+  let comparison = null;
+  if (streamingStats && nonStreamingStats) {
+    comparison = {
+      totalTimeDifference: streamingStats.avgTotalTime - nonStreamingStats.avgTotalTime,
+      audioTimeDifference: streamingStats.avgAudioTime - nonStreamingStats.avgAudioTime,
+      wpsImprovement: ((streamingStats.avgWordsPerSecond - nonStreamingStats.avgWordsPerSecond) / nonStreamingStats.avgWordsPerSecond * 100).toFixed(1),
+      fasterMethod: streamingStats.avgTotalTime < nonStreamingStats.avgTotalTime ? 'streaming' : 'non-streaming'
+    };
+  }
+  
+  res.json({
+    testMode: testMode,
+    timestamp: new Date().toISOString(),
+    streaming: streamingStats,
+    nonStreaming: nonStreamingStats,
+    comparison: comparison,
+    activeCalls: performanceMetrics.size,
+    rawData: allMetrics.map(([callSid, data]) => ({
+      callSid: callSid.substring(0, 8) + '...',
+      method: data.method,
+      responses: data.responses.length,
+      avgResponseTime: data.responses.length > 0 ? 
+        Math.round(data.responses.reduce((sum, r) => sum + r.totalTime, 0) / data.responses.length) : 0
+    }))
+  });
+});
+
+// Control endpoint for test mode
+app.post('/test-mode', (req, res) => {
+  const { enabled, method, alternatePerCall } = req.body;
+  
+  if (enabled !== undefined) testMode.enabled = enabled;
+  if (method && ['streaming', 'non-streaming'].includes(method)) testMode.currentMethod = method;
+  if (alternatePerCall !== undefined) testMode.alternatePerCall = alternatePerCall;
+  
+  res.json({
+    message: 'Test mode updated',
+    testMode: testMode
+  });
 });
 
 // Health check endpoint
@@ -431,19 +660,23 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'healthy', 
     timestamp: new Date().toISOString(),
-    activeConversations: conversations.size
+    activeConversations: conversations.size,
+    testMode: testMode.enabled
   });
 });
 
 // Root endpoint
 app.get('/', (req, res) => {
   res.json({ 
-    message: 'Jambonz Webhook Server with OpenAI and ElevenLabs',
+    message: 'Jambonz Webhook Server with OpenAI and ElevenLabs - A/B Testing Enabled',
+    testMode: testMode,
     endpoints: [
       'POST /webhook/call - Initial call handler',
       'POST /webhook/conversation - Conversation handler',
       'POST /webhook/status - Call status updates',
-      'GET /health - Health check'
+      'GET /health - Health check',
+      'GET /metrics - Performance comparison metrics',
+      'POST /test-mode - Configure A/B testing (body: {enabled, method, alternatePerCall})'
     ]
   });
 });

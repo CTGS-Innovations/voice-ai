@@ -1,0 +1,288 @@
+version: '3.8'
+
+services:
+  # GPU-Accelerated Open Source AI Services
+  gpu-services:
+    image: nvidia/cuda:12.1-devel-ubuntu22.04
+    container_name: jambonz-gpu-services
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0
+    volumes:
+      - ./gpu-services:/app
+      - ./models:/models
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+    working_dir: /app
+    command: >
+      bash -c "
+        apt-get update && 
+        apt-get install -y python3 python3-pip git wget curl build-essential &&
+        pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 &&
+        pip3 install accelerate transformers optimum[onnxruntime-gpu] &&
+        python3 -m pip install --upgrade pip &&
+        python3 setup_services.py
+      "
+    ports:
+      - "5002:5002"  # Coqui TTS
+      - "5003:5003"  # Bark TTS
+      - "5004:5004"  # Tortoise TTS
+      - "8080:8080"  # Llama.cpp
+      - "11434:11434" # Ollama
+      - "5000:5000"  # Text Generation WebUI
+      - "8081:8081"  # Faster-Whisper
+      - "8082:8082"  # Whisper.cpp
+      - "8083:8083"  # Vosk
+    networks:
+      - gpu-network
+
+  # Faster-Whisper Service (Highest Performance STT)
+  faster-whisper:
+    image: linkanon/faster-whisper-server:latest-gpu
+    container_name: faster-whisper-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - WHISPER_MODEL=base.en
+      - WHISPER_DEVICE=cuda
+      - WHISPER_COMPUTE_TYPE=float16
+      - BEAM_SIZE=5
+      - BEST_OF=5
+    volumes:
+      - ./models/faster-whisper:/models
+    ports:
+      - "8081:8000"
+    networks:
+      - gpu-network
+
+  # Coqui TTS Service (High Quality Voice Synthesis)
+  coqui-tts:
+    image: ghcr.io/coqui-ai/tts:latest-gpu
+    container_name: coqui-tts-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - TTS_MODEL=tts_models/en/ljspeech/tacotron2-DDC
+      - TTS_VOCODER=vocoder_models/en/ljspeech/hifigan_v2
+    volumes:
+      - ./models/coqui:/models
+      - ./coqui-config:/app/config
+    ports:
+      - "5002:5002"
+    command: >
+      bash -c "
+        python3 -m TTS.server.server --host 0.0.0.0 --port 5002 --use_cuda true
+      "
+    networks:
+      - gpu-network
+
+  # Llama.cpp Service (Fast LLM Inference)
+  llama-cpp:
+    image: ghcr.io/ggerganov/llama.cpp:full-cuda
+    container_name: llama-cpp-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - LLAMA_CUDA=1
+    volumes:
+      - ./models/llama:/models
+    ports:
+      - "8080:8080"
+    command: >
+      ./llama-server 
+        --model /models/llama-3.1-8b-instruct-q4_k_m.gguf
+        --host 0.0.0.0 
+        --port 8080
+        --n-gpu-layers 35
+        --n-ctx 4096
+        --threads 8
+        --n-predict 256
+        --temp 0.7
+        --top-p 0.9
+        --repeat-penalty 1.1
+    networks:
+      - gpu-network
+
+  # Ollama Service (Easy Model Management)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ./models/ollama:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - gpu-network
+
+  # Bark TTS Service (Natural Speech with Emotions)
+  bark-tts:
+    build:
+      context: ./bark-service
+      dockerfile: Dockerfile.gpu
+    container_name: bark-tts-gpu
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - BARK_VOICE_PRESET=v2/en_speaker_6
+      - BARK_USE_GPU=True
+    volumes:
+      - ./models/bark:/models
+    ports:
+      - "5003:5003"
+    networks:
+      - gpu-network
+
+  # Main Webhook Application (GPU-enabled)
+  gpu-webhook-app:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    container_name: jambonz-gpu-webhook
+    restart: unless-stopped
+    depends_on:
+      - faster-whisper
+      - coqui-tts
+      - llama-cpp
+      - ollama
+    environment:
+      # GPU Service URLs
+      - FASTER_WHISPER_URL=http://faster-whisper:8000
+      - COQUI_TTS_URL=http://coqui-tts:5002
+      - BARK_TTS_URL=http://bark-tts:5003
+      - LLAMA_CPP_URL=http://llama-cpp:8080
+      - OLLAMA_URL=http://ollama:11434
+      - WHISPER_CPP_URL=http://gpu-services:8082
+      - VOSK_URL=http://gpu-services:8083
+      
+      # Configuration
+      - GPU_PORT=3004
+      - NODE_ENV=production
+      - 
+      # Model preferences
+      - FASTER_WHISPER_MODEL=base.en
+      - OLLAMA_MODEL=llama3.1:8b
+      - COQUI_SPEAKER_ID=female_1
+      - BARK_VOICE=v2/en_speaker_6
+      - BEAM_SIZE=5
+      - BEST_OF=5
+      
+      # Fallback API keys (for comparison testing)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY}
+      - ELEVENLABS_VOICE_ID=${ELEVENLABS_VOICE_ID}
+    volumes:
+      - ./:/app
+      - ./audio-gpu:/app/audio-gpu
+    ports:
+      - "3004:3004"
+    working_dir: /app
+    command: node open-source.js
+    networks:
+      - gpu-network
+
+  # Performance Monitoring Service
+  gpu-monitor:
+    image: nvidia/dcgm-exporter:3.3.5-3.4.0-ubuntu22.04
+    container_name: gpu-monitor
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    ports:
+      - "9400:9400"
+    networks:
+      - gpu-network
+
+  # Grafana for Performance Visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: gpu-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-storage:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3005:3000"
+    networks:
+      - gpu-network
+
+  # Prometheus for Metrics Collection
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: gpu-prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-storage:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - gpu-network
+
+networks:
+  gpu-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/16
+
+volumes:
+  grafana-storage:
+  prometheus-storage:
