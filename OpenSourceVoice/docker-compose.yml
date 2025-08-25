@@ -134,30 +134,25 @@ services:
       start_period: 90s
 
   # ---------------------------------------------------------------------------
-  # CHATTERBOX TTS - ADVANCED NEURAL TEXT-TO-SPEECH WITH VOICE CLONING
+  # CHATTERBOX TTS (PRE-BUILT) - PRODUCTION-READY NEURAL TTS
   # ---------------------------------------------------------------------------
-  # High-quality neural text-to-speech using Chatterbox TTS model from Resemble AI
-  # Provides superior voice quality compared to standard TTS solutions
+  # Pre-built ChatterBox TTS image with OpenAI-compatible API
+  # This is the stable, production-ready version with optimized performance
   #
-  # Chatterbox Features:
+  # Features:
   # - Zero-shot voice cloning from audio samples
   # - Emotion and intensity control
   # - OpenAI-compatible API endpoints
   # - Built-in audio watermarking for authenticity
-  # - 0.5B parameter Llama-based backbone for natural speech
+  # - Optimized inference pipeline
   #
-  # API Endpoints:
-  # - POST /v1/audio/speech (OpenAI-compatible TTS)
-  # - POST /v1/audio/speech/upload (custom voice upload)
-  # - GET /v1/voices (voice library management)
-  #
-  # Voice Quality Comparison:
-  # - Chatterbox: Superior naturalness, emotion control, voice cloning
-  # - Coqui TTS: Good quality, fast inference, multi-speaker support
-  chatterbox-tts:
+  # Use this service for: Production deployments, stable performance
+  chatterbox-tts-prebuilt:
     image: bhimrazy/chatterbox-tts:v0.1.0
-    container_name: voice-ai-chatterbox
+    container_name: voice-ai-chatterbox-prebuilt
     restart: unless-stopped
+    # Uncomment to enable this service
+    profiles: ["chatterbox-prebuilt"]
     deploy:
       resources:
         reservations:
@@ -171,28 +166,32 @@ services:
       - CUDA_VISIBLE_DEVICES=0
       
       # API Configuration
-      - PORT=4123
+      - PORT=8000
       - HOST=0.0.0.0
       
       # TTS Model Configuration
       - MODEL_NAME=chatterbox-tts
       - DEFAULT_VOICE=default
       
-      # Performance Tuning
+      # Performance Tuning (Ultra-fast for phone conversations)
       - BATCH_SIZE=1
-      - MAX_TEXT_LENGTH=1000
+      - MAX_TEXT_LENGTH=200
       - STREAMING_ENABLED=true
+      - STREAM_BUFFER_SIZE=512
+      - INFERENCE_THREADS=4
       
       # Audio Quality Settings
       - SAMPLE_RATE=22050
       - AUDIO_FORMAT=wav
     volumes:
+      # Voice samples for cloning
+      - ./voices:/app/voices
       # Persistent voice library storage
-      - chatterbox-voices:/app/voices
+      - chatterbox-prebuilt-voices:/app/voice-cache
       # Model cache
-      - chatterbox-models:/app/models
+      - chatterbox-prebuilt-models:/app/models
     ports:
-      # Chatterbox TTS API endpoint (OpenAI compatible)
+      # ChatterBox TTS API endpoint (OpenAI compatible)
       - "4123:8000"
     networks:
       - voice-ai-network
@@ -202,6 +201,71 @@ services:
       timeout: 15s
       retries: 3
       start_period: 120s
+
+  # ---------------------------------------------------------------------------
+  # CHATTERBOX TTS (CUSTOM BUILD) - LATEST SOURCE CODE VERSION
+  # ---------------------------------------------------------------------------
+  # Custom-built ChatterBox TTS using the latest source code from the repository
+  # This version uses the actual ChatterBox source code for maximum control
+  #
+  # Features:
+  # - Latest ChatterBox TTS features and improvements
+  # - Direct access to source code for customization
+  # - Simple REST API for TTS generation
+  # - Voice cloning with uploaded reference audio
+  # - Configurable generation parameters (exaggeration, temperature, etc.)
+  #
+  # API Endpoints:
+  # - POST /tts - Generate speech from text
+  # - POST /tts/upload-reference - Upload reference audio for voice cloning
+  # - GET /health - Health check
+  # - GET /info - Model information
+  #
+  # Use this service for: Development, customization, latest features
+  chatterbox-tts-custom:
+    build:
+      context: ./chatterCode
+      dockerfile: Dockerfile
+    container_name: voice-ai-chatterbox-custom
+    restart: unless-stopped
+    # Uncomment to enable this service
+    profiles: ["chatterbox-custom"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      
+      # API Configuration
+      - PORT=8000
+      
+      # Model Configuration
+      - HF_HOME=/app/models
+      - TRANSFORMERS_CACHE=/app/models
+    volumes:
+      # Voice samples for reference audio
+      - ./voices:/app/voices
+      # Model cache (HuggingFace models can be large)
+      - chatterbox-custom-models:/app/models
+      # Temporary files for uploaded reference audio
+      - /tmp/chatterbox_refs:/tmp/chatterbox_refs
+    ports:
+      # ChatterBox Custom TTS API endpoint
+      - "4124:8000"
+    networks:
+      - voice-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 180s
 
   # ---------------------------------------------------------------------------
   # OLLAMA - LOCAL LLM INFERENCE ENGINE
@@ -380,13 +444,17 @@ volumes:
   coqui-models:
     name: voice-ai-coqui-models
     
-  # Chatterbox TTS voice library storage
-  chatterbox-voices:
-    name: voice-ai-chatterbox-voices
+  # Chatterbox TTS (Pre-built) voice library storage
+  chatterbox-prebuilt-voices:
+    name: voice-ai-chatterbox-prebuilt-voices
     
-  # Chatterbox TTS model storage (1GB+ for models)
-  chatterbox-models:
-    name: voice-ai-chatterbox-models
+  # Chatterbox TTS (Pre-built) model storage
+  chatterbox-prebuilt-models:
+    name: voice-ai-chatterbox-prebuilt-models
+    
+  # Chatterbox TTS (Custom) model storage (1GB+ for HuggingFace models)
+  chatterbox-custom-models:
+    name: voice-ai-chatterbox-custom-models
 
 # =============================================================================
 # DEPLOYMENT NOTES

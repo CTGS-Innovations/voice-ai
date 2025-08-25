@@ -15,19 +15,42 @@ const conversations = new Map();
 // Store generated audio files
 const audioCache = new Map();
 
+// Cache for voice prompts (loaded once at startup)
+const voicePromptCache = new Map();
+let currentVoicePrompt = null;
+
+// Cache for common responses (instant responses)
+const responseCache = new Map([
+  ['hello', "Hi there! I'm Scout. How can I help you build something awesome today?"],
+  ['hi', "Hey! Scout here. What are you working on?"],
+  ['how are you', "I'm great and ready to help! What's your project?"],
+  ['what can you do', "I help build MVPs fast! Need help with code, architecture, or deployment?"],
+  ['thank you', "You're welcome! Anything else you need?"],
+  ['thanks', "No problem! What's next?"],
+  ['bye', "See you later! Happy building!"],
+  ['goodbye', "Take care! Come back when you need help!"]
+]);
+
 // Performance testing data
 const performanceMetrics = new Map();
+
+// Set AI provider based on environment variable
+const aiProvider = process.env.AI_PROVIDER || 'ollama';
 let testMode = {
   enabled: true,
-  currentMethod: 'gpu-local', // FORCE 100% open-source
-  alternatePerCall: false // NO ALTERNATING - Always use GPU
+  currentMethod: aiProvider === 'openai' ? 'cloud-fallback' : 'gpu-local',
+  alternatePerCall: false
 };
+
+logger.info(`🤖 AI Provider: ${aiProvider.toUpperCase()}`);
+logger.info(`📝 TTS Provider: ${process.env.TTS_PROVIDER || 'chatterbox'}`);
+logger.info(`🔄 Test Mode: ${testMode.currentMethod}`);
 
 // 100% Free Open-Source GPU Services
 const GPU_SERVICES = {
   FASTER_WHISPER_URL: process.env.FASTER_WHISPER_URL || 'http://faster-whisper:9000',
   COQUI_TTS_URL: process.env.COQUI_TTS_URL || 'http://coqui-tts:5002',
-  CHATTERBOX_TTS_URL: process.env.CHATTERBOX_TTS_URL || 'http://chatterbox-tts:4123',
+  CHATTERBOX_TTS_URL: process.env.CHATTERBOX_TTS_URL || 'http://chatterbox-tts-prebuilt:8000',
   OLLAMA_URL: process.env.OLLAMA_URL || 'http://ollama:11434'
 };
 
@@ -40,6 +63,48 @@ async function ensureAudioDir() {
     await fs.access(AUDIO_DIR);
   } catch {
     await fs.mkdir(AUDIO_DIR, { recursive: true });
+  }
+}
+
+// Preload voice samples into memory for faster access
+async function preloadVoicePrompts() {
+  const startTime = Date.now();
+  const voiceSample = process.env.CHATTERBOX_VOICE_SAMPLE;
+  
+  if (!voiceSample || voiceSample === 'default') {
+    logger.info('Using default synthetic voice (no voice cloning)');
+    currentVoicePrompt = null;
+    return;
+  }
+  
+  try {
+    if (voiceSample.endsWith('.wav') || voiceSample.endsWith('.mp3')) {
+      const voicePath = path.join('/app/voices', voiceSample);
+      
+      // Check if already cached
+      if (voicePromptCache.has(voiceSample)) {
+        currentVoicePrompt = voicePromptCache.get(voiceSample);
+        logger.info(`Voice prompt loaded from cache: ${voiceSample}`);
+        return;
+      }
+      
+      // Load and cache the voice file
+      const audioBuffer = await fs.readFile(voicePath);
+      const base64Audio = audioBuffer.toString('base64');
+      
+      voicePromptCache.set(voiceSample, base64Audio);
+      currentVoicePrompt = base64Audio;
+      
+      const loadTime = Date.now() - startTime;
+      logger.info(`Voice sample preloaded: ${voiceSample} (${(audioBuffer.length / 1024 / 1024).toFixed(2)}MB) in ${loadTime}ms`);
+    } else if (voiceSample.startsWith('http')) {
+      // For URLs, we'll fetch on demand
+      currentVoicePrompt = voiceSample;
+      logger.info(`Using voice sample URL: ${voiceSample}`);
+    }
+  } catch (error) {
+    logger.error(`Failed to preload voice sample: ${error.message}`);
+    currentVoicePrompt = null;
   }
 }
 
@@ -113,38 +178,17 @@ async function generateChatterboxTTS(text, callSid) {
   logger.audio('TTS_START', { provider: 'Chatterbox TTS', text: text.substring(0, 30) + '...', callSid });
   
   try {
-    // Prepare request payload
+    // Prepare simple request payload that matches the working API format
     const payload = {
-      text: text,
-      exaggeration: parseFloat(process.env.CHATTERBOX_EXAGGERATION || '0.5'),
-      cfg: parseFloat(process.env.CHATTERBOX_CFG || '0.5'),
-      temperature: parseFloat(process.env.CHATTERBOX_TEMPERATURE || '0.8')
+      text: text
     };
     
-    // Add voice cloning if a voice sample is specified
-    const voiceSample = process.env.CHATTERBOX_VOICE_SAMPLE;
-    if (voiceSample && voiceSample !== 'default') {
-      // Check if it's a file path
-      if (voiceSample.endsWith('.wav') || voiceSample.endsWith('.mp3')) {
-        const voicePath = path.join('/app/voices', voiceSample);
-        try {
-          await fs.access(voicePath);
-          // Read the file and convert to base64
-          const audioBuffer = await fs.readFile(voicePath);
-          payload.audio_prompt = audioBuffer.toString('base64');
-          logger.info(`Using voice sample: ${voiceSample}`, { callSid });
-        } catch (err) {
-          logger.warn(`Voice sample file not found: ${voicePath}, using default voice`, { callSid });
-        }
-      } else if (voiceSample.startsWith('http')) {
-        // It's a URL
-        payload.audio_prompt = voiceSample;
-        logger.info(`Using voice sample URL: ${voiceSample}`, { callSid });
-      }
-    }
+    // The pre-built container may not support voice cloning parameters
+    // Keep this simple for maximum compatibility
+    logger.debug(`Generating speech with Chatterbox TTS`, { callSid, textLength: text.length });
     
-    // Use Chatterbox TTS native API endpoint
-    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/speech`, payload, {
+    // Use Chatterbox TTS /tts endpoint (custom build)
+    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/tts`, payload, {
       responseType: 'arraybuffer',
       timeout: parseInt(process.env.TTS_TIMEOUT_MS) || 30000,
       headers: {
@@ -185,12 +229,15 @@ async function generateOllamaResponse(messages) {
       messages: messages,
       stream: false,
       options: {
-        temperature: 0.7,
-        top_p: 0.9,
-        num_predict: 100
+        temperature: parseFloat(process.env.LLM_TEMPERATURE) || 0.5,
+        top_p: parseFloat(process.env.LLM_TOP_P) || 0.7,
+        num_predict: parseInt(process.env.LLM_MAX_TOKENS) || 40,
+        num_ctx: 2048,  // Smaller context for speed
+        num_batch: 512, // Larger batch for throughput
+        num_thread: 8   // Use more threads
       }
     }, {
-      timeout: 20000
+      timeout: parseInt(process.env.LLM_TIMEOUT_MS) || 5000
     });
     
     const aiResponse = response.data.message.content;
@@ -389,13 +436,43 @@ Remember: You're here to provide excellent customer service and make every inter
     }
   ]);
   
+  // Generate greeting audio using our configured TTS
+  const greetingText = "Hi! I'm Scout. How can I help you?";
+  let greetingUrl;
+  
+  try {
+    const audioId = await generateChatterboxTTS(greetingText, callSid);
+    greetingUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
+  } catch (error) {
+    logger.error('Failed to generate greeting audio', { callSid, error: error.message });
+    // Fallback to simple say verb if TTS fails
+    const response = [
+      {
+        "verb": "say",
+        "text": greetingText,
+        "synthesizer": { "vendor": "default" }
+      },
+      {
+        "verb": "gather",
+        "input": ["speech"],
+        "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+        "timeout": 15,
+        "speechTimeout": 3,
+        "recognizer": {
+          "vendor": "openai",
+          "model": "whisper-1",
+          "language": "en"
+        }
+      }
+    ];
+    logger.response(200, callSid, response);
+    return res.json(response);
+  }
+  
   const response = [
     {
-      "verb": "say",
-      "text": "Hey there! I'm Scout, your MVP-scale assistant! Ready to help you build something awesome. What can I help you with today?",
-      "synthesizer": {
-        "vendor": "default"
-      }
+      "verb": "play",
+      "url": greetingUrl
     },
     {
       "verb": "gather",
@@ -512,23 +589,32 @@ app.post('/webhook/conversation', async (req, res) => {
     let aiResponse;
     const llmStartTime = Date.now();
     
-    // Generate AI response using selected method
-    try {
-      if (testMethod === 'gpu-local') {
-        // Use LOCAL GPU Ollama
-        aiResponse = await generateOllamaResponse(conversationHistory);
-      } else {
-        // Use cloud fallback
-        aiResponse = await generateOpenAIResponse(conversationHistory);
-      }
-    } catch (error) {
-      logger.warn('Primary LLM method failed, handling gracefully', { callSid, method: testMethod });
-      if (testMethod === 'gpu-local') {
-        logger.error('Local GPU LLM failed - this should not happen in production', { callSid, error: error.message });
-        // In 100% open-source mode, we should NOT fallback to OpenAI
-        aiResponse = "I'm having trouble processing your request. Let me try again.";
-      } else {
-        aiResponse = await generateOpenAIResponse(conversationHistory);
+    // Check cache for instant responses to common phrases
+    const lowerMessage = userMessage.toLowerCase().trim();
+    if (responseCache.has(lowerMessage)) {
+      aiResponse = responseCache.get(lowerMessage);
+      logger.info(`Using cached response for: "${lowerMessage}"`, { callSid });
+    } else {
+      // Generate AI response using selected method
+      try {
+        if (testMethod === 'gpu-local') {
+          // Use LOCAL GPU Ollama
+          logger.info(`🤖 Using LOCAL GPU Ollama for AI response`, { callSid });
+          aiResponse = await generateOllamaResponse(conversationHistory);
+        } else {
+          // Use cloud fallback
+          logger.info(`☁️ Using OpenAI API for AI response`, { callSid });
+          aiResponse = await generateOpenAIResponse(conversationHistory);
+        }
+      } catch (error) {
+        logger.warn('Primary LLM method failed, handling gracefully', { callSid, method: testMethod });
+        if (testMethod === 'gpu-local') {
+          logger.error('Local GPU LLM failed - this should not happen in production', { callSid, error: error.message });
+          // In 100% open-source mode, we should NOT fallback to OpenAI
+          aiResponse = "I'm having trouble processing your request. Let me try again.";
+        } else {
+          aiResponse = await generateOpenAIResponse(conversationHistory);
+        }
       }
     }
     
@@ -554,11 +640,20 @@ app.post('/webhook/conversation', async (req, res) => {
       let audioGenerationTime;
       
       if (testMethod === 'gpu-local') {
-        // Try TTS providers in preference order: Chatterbox -> Coqui -> System fallback
+        // Try TTS providers based on TTS_PROVIDER setting
         const ttsProvider = process.env.TTS_PROVIDER || 'chatterbox';
         
         try {
-          if (ttsProvider === 'chatterbox') {
+          if (ttsProvider === 'elevenlabs' && process.env.ELEVENLABS_API_KEY) {
+            try {
+              audioId = await generateElevenLabsTTS(aiResponse, callSid);
+              audioGenerationTime = Date.now() - audioStartTime;
+            } catch (elevenLabsError) {
+              logger.warn('ElevenLabs TTS failed, falling back to Chatterbox', { callSid, error: elevenLabsError.message });
+              audioId = await generateChatterboxTTS(aiResponse, callSid);
+              audioGenerationTime = Date.now() - audioStartTime;
+            }
+          } else if (ttsProvider === 'chatterbox') {
             try {
               audioId = await generateChatterboxTTS(aiResponse, callSid);
               audioGenerationTime = Date.now() - audioStartTime;
@@ -578,8 +673,20 @@ app.post('/webhook/conversation', async (req, res) => {
           throw new Error('TTS service unavailable - using system TTS');
         }
       } else {
-        audioId = await generateElevenLabsAudio(aiResponse, callSid);
-        audioGenerationTime = Date.now() - audioStartTime;
+        // Use TTS_PROVIDER setting even with cloud AI provider
+        const ttsProvider = process.env.TTS_PROVIDER || 'chatterbox';
+        
+        if (ttsProvider === 'elevenlabs' && process.env.ELEVENLABS_API_KEY) {
+          audioId = await generateElevenLabsAudio(aiResponse, callSid);
+          audioGenerationTime = Date.now() - audioStartTime;
+        } else if (ttsProvider === 'chatterbox') {
+          audioId = await generateChatterboxTTS(aiResponse, callSid);
+          audioGenerationTime = Date.now() - audioStartTime;
+        } else {
+          // Default to Coqui TTS
+          audioId = await generateCoquiTTS(aiResponse, callSid);
+          audioGenerationTime = Date.now() - audioStartTime;
+        }
       }
       
       const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
@@ -819,6 +926,9 @@ app.listen(PORT, async () => {
   // Ensure audio directory exists
   await ensureAudioDir();
   
+  // Preload voice samples for instant access
+  await preloadVoicePrompts();
+  
   // Intelligent startup logging
   logger.startup({
     port: PORT,
@@ -830,10 +940,12 @@ app.listen(PORT, async () => {
       whisper: GPU_SERVICES.FASTER_WHISPER_URL
     },
     model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
+    aiProvider: process.env.AI_PROVIDER || 'ollama',
     ttsProvider: process.env.TTS_PROVIDER || 'chatterbox',
     speakers: {
       coqui: process.env.VITS_SPEAKER_ID || 'p225',
-      chatterbox: process.env.CHATTERBOX_VOICE || 'default'
+      chatterbox: process.env.CHATTERBOX_VOICE_SAMPLE || 'default',
+      elevenlabs: process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM'
     }
   });
 });
