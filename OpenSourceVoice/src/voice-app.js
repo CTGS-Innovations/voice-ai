@@ -108,9 +108,8 @@ async function generateOllamaResponse(messages) {
   console.log(`🧠 GPU OLLAMA REQUEST (LOCAL)`);
   
   try {
-    const ollamaUrl = process.env.OLLAMA_URL || 'http://ollama:11434';
     
-    const response = await axios.post(`${ollamaUrl}/api/chat`, {
+    const response = await axios.post(`${GPU_SERVICES.OLLAMA_URL}/api/chat`, {
       model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
       messages: messages,
       stream: false,
@@ -322,7 +321,7 @@ Remember: You're here to provide excellent customer service and make every inter
     {
       "verb": "gather",
       "input": ["speech"],
-      "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+      "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
       "timeout": 15,
       "speechTimeout": 3,
       "recognizer": {
@@ -372,7 +371,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
-          "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+          "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "timeout": 15,
           "speechTimeout": 2,
           "recognizer": {
@@ -486,7 +485,7 @@ app.post('/webhook/conversation', async (req, res) => {
         audioGenerationTime = Date.now() - audioStartTime;
       }
       
-      const audioUrl = `https://talk.mvp-scale.com/audio/generated/${audioId}`;
+      const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
       
       response = [
         {
@@ -496,7 +495,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
-          "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+          "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "timeout": 15,
           "speechTimeout": 2,
           "recognizer": {
@@ -523,7 +522,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
-          "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+          "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "timeout": 15,
           "speechTimeout": 2,
           "recognizer": {
@@ -552,7 +551,7 @@ app.post('/webhook/conversation', async (req, res) => {
       {
         "verb": "gather",
         "input": ["speech"],
-        "actionHook": "https://talk.mvp-scale.com/webhook/conversation",
+        "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
         "timeout": 15,
         "speechTimeout": 2,
         "recognizer": {

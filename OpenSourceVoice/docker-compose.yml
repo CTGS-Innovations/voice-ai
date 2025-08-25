@@ -167,6 +167,14 @@ services:
       # Network Configuration
       # 0.0.0.0 allows access from other containers
       - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_PORT=11434
+      
+      # Model Configuration
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1:8b}
+      
+      # Keep models loaded in memory (never unload)
+      # -1 = infinite, 0 = immediate unload, or duration like "30m"
+      - OLLAMA_KEEP_ALIVE=-1
       
       # Optional: Limit concurrent requests (default: unlimited)
       # - OLLAMA_MAX_LOADED_MODELS=1
@@ -176,17 +184,22 @@ services:
     volumes:
       # Persist downloaded models (can be 4GB+ per model)
       - ollama-data:/root/.ollama
+      # Mount the entrypoint script
+      - ./scripts/ollama-entrypoint-simple.sh:/entrypoint.sh:ro
     ports:
       # Ollama API endpoint (using 11435 to avoid conflicts)
       - "11435:11434"
     networks:
       - voice-ai-network
+    # Use custom entrypoint for model initialization and activation
+    entrypoint: ["/entrypoint.sh"]
     healthcheck:
-      test: ["CMD", "/bin/ollama", "list"]
-      interval: 15s
-      timeout: 10s
+      # Enhanced health check - verify server responds AND model is loaded
+      test: ["CMD-SHELL", "/bin/ollama ps | grep -q '${OLLAMA_MODEL:-llama3.1:8b}' || exit 1"]
+      interval: 30s
+      timeout: 15s
       retries: 3
-      start_period: 30s
+      start_period: 300s  # Give 5 minutes for initial model download and activation
 
   # ---------------------------------------------------------------------------
   # VOICE AI WEBHOOK APPLICATION
@@ -226,6 +239,7 @@ services:
       - NODE_ENV=production
       
       # GPU Service Endpoints (internal Docker network)
+      # Using container names for internal communication
       - OLLAMA_URL=http://ollama:11434
       - FASTER_WHISPER_URL=http://faster-whisper:9000
       - COQUI_TTS_URL=http://coqui-tts:5002
@@ -249,7 +263,7 @@ services:
       - STT_TIMEOUT_MS=8000
       
       # Webhook Configuration (update with your Jambonz server URL)
-      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-http://voice-app:3003}
+      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-https://talk3.mvp-scale.com}
       
       # Optional: Enable debug logging
       # - DEBUG=voice-ai:*
