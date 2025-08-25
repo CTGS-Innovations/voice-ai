@@ -134,6 +134,76 @@ services:
       start_period: 90s
 
   # ---------------------------------------------------------------------------
+  # CHATTERBOX TTS - ADVANCED NEURAL TEXT-TO-SPEECH WITH VOICE CLONING
+  # ---------------------------------------------------------------------------
+  # High-quality neural text-to-speech using Chatterbox TTS model from Resemble AI
+  # Provides superior voice quality compared to standard TTS solutions
+  #
+  # Chatterbox Features:
+  # - Zero-shot voice cloning from audio samples
+  # - Emotion and intensity control
+  # - OpenAI-compatible API endpoints
+  # - Built-in audio watermarking for authenticity
+  # - 0.5B parameter Llama-based backbone for natural speech
+  #
+  # API Endpoints:
+  # - POST /v1/audio/speech (OpenAI-compatible TTS)
+  # - POST /v1/audio/speech/upload (custom voice upload)
+  # - GET /v1/voices (voice library management)
+  #
+  # Voice Quality Comparison:
+  # - Chatterbox: Superior naturalness, emotion control, voice cloning
+  # - Coqui TTS: Good quality, fast inference, multi-speaker support
+  chatterbox-tts:
+    image: bhimrazy/chatterbox-tts:v0.1.0
+    container_name: voice-ai-chatterbox
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      # GPU Configuration
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      
+      # API Configuration
+      - PORT=4123
+      - HOST=0.0.0.0
+      
+      # TTS Model Configuration
+      - MODEL_NAME=chatterbox-tts
+      - DEFAULT_VOICE=default
+      
+      # Performance Tuning
+      - BATCH_SIZE=1
+      - MAX_TEXT_LENGTH=1000
+      - STREAMING_ENABLED=true
+      
+      # Audio Quality Settings
+      - SAMPLE_RATE=22050
+      - AUDIO_FORMAT=wav
+    volumes:
+      # Persistent voice library storage
+      - chatterbox-voices:/app/voices
+      # Model cache
+      - chatterbox-models:/app/models
+    ports:
+      # Chatterbox TTS API endpoint (OpenAI compatible)
+      - "4123:4123"
+    networks:
+      - voice-ai-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4123/health"]
+      interval: 30s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+
+  # ---------------------------------------------------------------------------
   # OLLAMA - LOCAL LLM INFERENCE ENGINE
   # ---------------------------------------------------------------------------
   # Self-hosted large language model inference using optimized GGUF models
@@ -307,6 +377,14 @@ volumes:
   # Coqui TTS model storage (500MB+ per model)
   coqui-models:
     name: voice-ai-coqui-models
+    
+  # Chatterbox TTS voice library storage
+  chatterbox-voices:
+    name: voice-ai-chatterbox-voices
+    
+  # Chatterbox TTS model storage (1GB+ for models)
+  chatterbox-models:
+    name: voice-ai-chatterbox-models
 
 # =============================================================================
 # DEPLOYMENT NOTES

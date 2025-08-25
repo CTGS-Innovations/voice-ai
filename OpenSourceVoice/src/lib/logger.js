@@ -142,13 +142,17 @@ class Logger {
     console.log('');
     console.log('🔧 GPU Service Endpoints:');
     this.system(`Ollama LLM: ${config.services.ollama}`);
-    this.system(`Coqui TTS: ${config.services.tts}`);
+    this.system(`Coqui TTS: ${config.services.coquiTts}`);
+    this.system(`Chatterbox TTS: ${config.services.chatterboxTts}`);
     this.system(`Faster Whisper: ${config.services.whisper}`);
     
     console.log('');
     console.log('⚙️  Configuration:');
     this.system(`Model: ${config.model}`);
-    this.system(`TTS Speaker: ${config.speaker}`);
+    this.system(`TTS Provider: ${config.ttsProvider}`);
+    if (config.speakers) {
+      this.system(`TTS Voices: Coqui(${config.speakers.coqui}) | Chatterbox(${config.speakers.chatterbox})`);
+    }
     this.system(`Log Level: ${process.env.LOG_LEVEL || 'INFO'}`);
     
     console.log('');

@@ -27,6 +27,7 @@ let testMode = {
 const GPU_SERVICES = {
   FASTER_WHISPER_URL: process.env.FASTER_WHISPER_URL || 'http://faster-whisper:9000',
   COQUI_TTS_URL: process.env.COQUI_TTS_URL || 'http://coqui-tts:5002',
+  CHATTERBOX_TTS_URL: process.env.CHATTERBOX_TTS_URL || 'http://chatterbox-tts:4123',
   OLLAMA_URL: process.env.OLLAMA_URL || 'http://ollama:11434'
 };
 
@@ -99,6 +100,51 @@ async function generateCoquiTTS(text, callSid) {
   } catch (error) {
     const duration = Date.now() - generateStartTime;
     logger.error(`TTS generation failed after ${duration}ms`, { callSid, provider: 'Coqui VITS', error: error.message });
+    throw error;
+  }
+}
+
+// Advanced GPU-Powered TTS using Chatterbox TTS (Premium Quality)
+async function generateChatterboxTTS(text, callSid) {
+  const generateStartTime = Date.now();
+  const audioId = crypto.randomBytes(16).toString('hex');
+  const audioPath = path.join(AUDIO_DIR, `${audioId}.wav`);
+  
+  logger.audio('TTS_START', { provider: 'Chatterbox TTS', text: text.substring(0, 30) + '...', callSid });
+  
+  try {
+    // Use OpenAI-compatible API endpoint for Chatterbox TTS
+    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/v1/audio/speech`, {
+      model: "chatterbox-tts",
+      input: text,
+      voice: process.env.CHATTERBOX_VOICE || "default",
+      response_format: "wav",
+      speed: 1.0
+    }, {
+      responseType: 'arraybuffer',
+      timeout: parseInt(process.env.TTS_TIMEOUT_MS) || 30000,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    // Save audio file
+    await fs.writeFile(audioPath, response.data);
+    
+    // Store in cache for serving
+    audioCache.set(audioId, {
+      path: audioPath,
+      callSid: callSid,
+      createdAt: Date.now(),
+      method: 'chatterbox-gpu'
+    });
+    
+    const duration = Date.now() - generateStartTime;
+    logger.performance('TTS Generation', duration, { callSid, audioId, provider: 'Chatterbox TTS' });
+    return audioId;
+  } catch (error) {
+    const duration = Date.now() - generateStartTime;
+    logger.error(`TTS generation failed after ${duration}ms`, { callSid, provider: 'Chatterbox TTS', error: error.message });
     throw error;
   }
 }
@@ -483,11 +529,26 @@ app.post('/webhook/conversation', async (req, res) => {
       let audioGenerationTime;
       
       if (testMethod === 'gpu-local') {
+        // Try TTS providers in preference order: Chatterbox -> Coqui -> System fallback
+        const ttsProvider = process.env.TTS_PROVIDER || 'chatterbox';
+        
         try {
-          audioId = await generateCoquiTTS(aiResponse, callSid);
-          audioGenerationTime = Date.now() - audioStartTime;
+          if (ttsProvider === 'chatterbox') {
+            try {
+              audioId = await generateChatterboxTTS(aiResponse, callSid);
+              audioGenerationTime = Date.now() - audioStartTime;
+            } catch (chatterboxError) {
+              logger.warn('Chatterbox TTS failed, falling back to Coqui', { callSid, error: chatterboxError.message });
+              audioId = await generateCoquiTTS(aiResponse, callSid);
+              audioGenerationTime = Date.now() - audioStartTime;
+            }
+          } else {
+            // Use Coqui TTS as primary
+            audioId = await generateCoquiTTS(aiResponse, callSid);
+            audioGenerationTime = Date.now() - audioStartTime;
+          }
         } catch (error) {
-          logger.error('GPU TTS failed - using fallback', { callSid, error: error.message });
+          logger.error('All GPU TTS providers failed - using system fallback', { callSid, error: error.message });
           // In 100% open-source mode, we use default TTS instead of paid services
           throw new Error('TTS service unavailable - using system TTS');
         }
@@ -739,10 +800,15 @@ app.listen(PORT, async () => {
     webhookBase: process.env.WEBHOOK_BASE_URL,
     services: {
       ollama: GPU_SERVICES.OLLAMA_URL,
-      tts: GPU_SERVICES.COQUI_TTS_URL,
+      coquiTts: GPU_SERVICES.COQUI_TTS_URL,
+      chatterboxTts: GPU_SERVICES.CHATTERBOX_TTS_URL,
       whisper: GPU_SERVICES.FASTER_WHISPER_URL
     },
     model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
-    speaker: process.env.VITS_SPEAKER_ID || 'p225'
+    ttsProvider: process.env.TTS_PROVIDER || 'chatterbox',
+    speakers: {
+      coqui: process.env.VITS_SPEAKER_ID || 'p225',
+      chatterbox: process.env.CHATTERBOX_VOICE || 'default'
+    }
   });
 });
