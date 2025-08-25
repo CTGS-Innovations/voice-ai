@@ -193,11 +193,11 @@ services:
       - chatterbox-models:/app/models
     ports:
       # Chatterbox TTS API endpoint (OpenAI compatible)
-      - "4123:4123"
+      - "4123:8000"
     networks:
       - voice-ai-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4123/health"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || curl -f http://localhost:8000/ || exit 1"]
       interval: 30s
       timeout: 15s
       retries: 3
@@ -340,6 +340,8 @@ services:
     volumes:
       # Application source code (for development)
       - ./src:/app/src
+      # Voice samples for cloning
+      - ./voices:/app/voices
       # Logs (optional)
       - ./logs:/app/logs
     ports:

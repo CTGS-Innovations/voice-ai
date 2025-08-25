@@ -113,14 +113,38 @@ async function generateChatterboxTTS(text, callSid) {
   logger.audio('TTS_START', { provider: 'Chatterbox TTS', text: text.substring(0, 30) + '...', callSid });
   
   try {
-    // Use OpenAI-compatible API endpoint for Chatterbox TTS
-    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/v1/audio/speech`, {
-      model: "chatterbox-tts",
-      input: text,
-      voice: process.env.CHATTERBOX_VOICE || "default",
-      response_format: "wav",
-      speed: 1.0
-    }, {
+    // Prepare request payload
+    const payload = {
+      text: text,
+      exaggeration: parseFloat(process.env.CHATTERBOX_EXAGGERATION || '0.5'),
+      cfg: parseFloat(process.env.CHATTERBOX_CFG || '0.5'),
+      temperature: parseFloat(process.env.CHATTERBOX_TEMPERATURE || '0.8')
+    };
+    
+    // Add voice cloning if a voice sample is specified
+    const voiceSample = process.env.CHATTERBOX_VOICE_SAMPLE;
+    if (voiceSample && voiceSample !== 'default') {
+      // Check if it's a file path
+      if (voiceSample.endsWith('.wav') || voiceSample.endsWith('.mp3')) {
+        const voicePath = path.join('/app/voices', voiceSample);
+        try {
+          await fs.access(voicePath);
+          // Read the file and convert to base64
+          const audioBuffer = await fs.readFile(voicePath);
+          payload.audio_prompt = audioBuffer.toString('base64');
+          logger.info(`Using voice sample: ${voiceSample}`, { callSid });
+        } catch (err) {
+          logger.warn(`Voice sample file not found: ${voicePath}, using default voice`, { callSid });
+        }
+      } else if (voiceSample.startsWith('http')) {
+        // It's a URL
+        payload.audio_prompt = voiceSample;
+        logger.info(`Using voice sample URL: ${voiceSample}`, { callSid });
+      }
+    }
+    
+    // Use Chatterbox TTS native API endpoint
+    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/speech`, payload, {
       responseType: 'arraybuffer',
       timeout: parseInt(process.env.TTS_TIMEOUT_MS) || 30000,
       headers: {
