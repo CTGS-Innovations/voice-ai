@@ -1,14 +1,13 @@
 require('dotenv').config();
 const express = require('express');
-const morgan = require('morgan');
 const fs = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const axios = require('axios');
+const logger = require('./lib/logger');
 
 const app = express();
 app.use(express.json());
-app.use(morgan('dev'));
 
 // Store conversation history per call
 const conversations = new Map();
@@ -52,9 +51,9 @@ async function cleanupOldAudio() {
       try {
         await fs.unlink(info.path);
         audioCache.delete(audioId);
-        console.log(`Cleaned up old GPU audio file: ${audioId}`);
+        logger.debug(`Cleaned up old audio file: ${audioId}`);
       } catch (error) {
-        console.error(`Error cleaning up GPU audio file ${audioId}:`, error);
+        logger.error(`Error cleaning up audio file ${audioId}`, { error: error.message });
       }
     }
   }
@@ -69,7 +68,7 @@ async function generateCoquiTTS(text, callSid) {
   const audioId = crypto.randomBytes(16).toString('hex');
   const audioPath = path.join(AUDIO_DIR, `${audioId}.wav`);
   
-  console.log(`🎵 GPU VITS TTS: ${callSid} - ${text.substring(0, 30)}...`);
+  logger.audio('TTS_START', { provider: 'Coqui VITS', text: text.substring(0, 30) + '...', callSid });
   
   try {
     // Use VITS production-quality model with speaker selection
@@ -94,10 +93,12 @@ async function generateCoquiTTS(text, callSid) {
       method: 'vits-gpu'
     });
     
-    console.log(`⏱️  GPU VITS COMPLETE: +${Date.now() - generateStartTime}ms - ${audioId}`);
+    const duration = Date.now() - generateStartTime;
+    logger.performance('TTS Generation', duration, { callSid, audioId, provider: 'Coqui VITS' });
     return audioId;
   } catch (error) {
-    console.error(`⏱️  GPU VITS ERROR: +${Date.now() - generateStartTime}ms -`, error.message);
+    const duration = Date.now() - generateStartTime;
+    logger.error(`TTS generation failed after ${duration}ms`, { callSid, provider: 'Coqui VITS', error: error.message });
     throw error;
   }
 }
@@ -105,7 +106,7 @@ async function generateCoquiTTS(text, callSid) {
 // GPU-Powered LLM using Ollama (LOCAL ONLY)
 async function generateOllamaResponse(messages) {
   const generateStartTime = Date.now();
-  console.log(`🧠 GPU OLLAMA REQUEST (LOCAL)`);
+  logger.info('LLM request started', { provider: 'Ollama Local', model: process.env.OLLAMA_MODEL || 'llama3.1:8b' });
   
   try {
     
@@ -123,10 +124,12 @@ async function generateOllamaResponse(messages) {
     });
     
     const aiResponse = response.data.message.content;
-    console.log(`⏱️  GPU OLLAMA COMPLETE: +${Date.now() - generateStartTime}ms`);
+    const duration = Date.now() - generateStartTime;
+    logger.performance('LLM Generation', duration, { provider: 'Ollama Local', model: process.env.OLLAMA_MODEL || 'llama3.1:8b' });
     return aiResponse;
   } catch (error) {
-    console.error(`⏱️  GPU OLLAMA ERROR: +${Date.now() - generateStartTime}ms -`, error.message);
+    const duration = Date.now() - generateStartTime;
+    logger.error(`LLM generation failed after ${duration}ms`, { provider: 'Ollama Local', error: error.message });
     throw error;
   }
 }
@@ -137,7 +140,7 @@ async function generateElevenLabsAudio(text, callSid) {
   const audioId = crypto.randomBytes(16).toString('hex');
   const audioPath = path.join(AUDIO_DIR, `${audioId}.mp3`);
   
-  console.log(`🎵 FALLBACK ELEVENLABS: ${callSid} - ${text.substring(0, 30)}...`);
+  logger.debug('Using ElevenLabs fallback TTS', { callSid, text: text.substring(0, 30) + '...' });
   const elevenLabsStartTime = Date.now();
   
   try {
@@ -161,15 +164,15 @@ async function generateElevenLabsAudio(text, callSid) {
       throw new Error(`ElevenLabs API error: ${response.status} ${response.statusText}`);
     }
     
-    console.log(`⏱️  ELEVENLABS RESPONDED: +${Date.now() - elevenLabsStartTime}ms`);
+    logger.performance('ElevenLabs API', Date.now() - elevenLabsStartTime, { callSid });
     const bufferStartTime = Date.now();
     
     const audioBuffer = await response.arrayBuffer();
-    console.log(`⏱️  AUDIO BUFFER READY: +${Date.now() - bufferStartTime}ms`);
+    logger.debug(`Audio buffer ready`, { duration: `${Date.now() - bufferStartTime}ms` });
     
     const writeStartTime = Date.now();
     await fs.writeFile(audioPath, Buffer.from(audioBuffer));
-    console.log(`⏱️  FILE WRITTEN: +${Date.now() - writeStartTime}ms`);
+    logger.debug('Audio file written', { duration: `${Date.now() - writeStartTime}ms` });
     
     audioCache.set(audioId, {
       path: audioPath,
@@ -178,7 +181,7 @@ async function generateElevenLabsAudio(text, callSid) {
       method: 'elevenlabs-fallback'
     });
     
-    console.log(`⏱️  FALLBACK TOTAL: +${Date.now() - generateStartTime}ms - ${audioId}`);
+    logger.performance('ElevenLabs Total', Date.now() - generateStartTime, { callSid, audioId });
     return audioId;
   } catch (error) {
     console.error(`⏱️  FALLBACK ERROR: +${Date.now() - generateStartTime}ms -`, error);
@@ -189,7 +192,7 @@ async function generateElevenLabsAudio(text, callSid) {
 // GPU-Powered Speech Recognition using faster-whisper (FREE)
 async function transcribeFasterWhisper(audioBuffer) {
   const transcribeStartTime = Date.now();
-  console.log(`🎤 GPU FASTER-WHISPER TRANSCRIBE (FREE)`);
+  logger.debug('Starting Faster-Whisper transcription');
   
   try {
     const formData = new FormData();
@@ -208,7 +211,7 @@ async function transcribeFasterWhisper(audioBuffer) {
     });
     
     const transcript = response.data.text;
-    console.log(`⏱️  GPU FASTER-WHISPER COMPLETE: +${Date.now() - transcribeStartTime}ms`);
+    logger.performance('Speech Recognition', Date.now() - transcribeStartTime);
     return transcript;
   } catch (error) {
     console.error(`⏱️  GPU FASTER-WHISPER ERROR: +${Date.now() - transcribeStartTime}ms -`, error.message);
@@ -219,7 +222,7 @@ async function transcribeFasterWhisper(audioBuffer) {
 // Fallback to OpenAI (mirroring server.js behavior)
 async function generateOpenAIResponse(messages) {
   const generateStartTime = Date.now();
-  console.log(`🧠 FALLBACK OPENAI REQUEST`);
+  logger.debug('Using OpenAI fallback LLM');
   
   try {
     const OpenAI = require('openai');
@@ -233,7 +236,7 @@ async function generateOpenAIResponse(messages) {
     });
     
     const aiResponse = completion.choices[0].message.content;
-    console.log(`⏱️  OPENAI COMPLETE: +${Date.now() - generateStartTime}ms`);
+    logger.performance('OpenAI LLM', Date.now() - generateStartTime);
     return aiResponse;
   } catch (error) {
     console.error(`⏱️  OPENAI ERROR: +${Date.now() - generateStartTime}ms -`, error.message);
@@ -258,7 +261,7 @@ function initializeCallPerformance(callSid) {
     totalResponseTime: 0
   });
   
-  console.log(`Call ${callSid} assigned method: ${method}`);
+  logger.debug(`Call assigned processing method`, { callSid, method });
   return method;
 }
 
@@ -279,18 +282,23 @@ function recordResponseTime(callSid, startTime, audioGenerationTime, textLength)
   metrics.totalResponseTime += totalTime;
   performanceMetrics.set(callSid, metrics);
   
-  console.log(`${metrics.method} response - Total: ${totalTime}ms, Audio: ${audioGenerationTime}ms, WPS: ${responseData.wordsPerSecond}`);
+  logger.debug('Response metrics recorded', { 
+    method: metrics.method, 
+    totalTime: `${totalTime}ms`, 
+    audioTime: `${audioGenerationTime}ms`,
+    wordsPerSecond: responseData.wordsPerSecond
+  });
 }
 
-// Main call webhook - handles incoming calls (EXACT MIRROR of server.js)
+// Main call webhook - handles incoming calls
 const handleIncomingCall = async (req, res) => {
-  console.log('=== NEW INCOMING CALL ===');
-  console.log('Call SID:', req.body.call_sid);
-  console.log('From:', req.body.from);
-  console.log('To:', req.body.to);
+  const callSid = req.body.call_sid;
+  const from = req.body.from;
+  const to = req.body.to;
+  
+  logger.callStart(callSid, from, to);
   
   // Initialize conversation history for this call
-  const callSid = req.body.call_sid;
   const testMethod = initializeCallPerformance(callSid);
   
   conversations.set(callSid, [
@@ -332,7 +340,7 @@ Remember: You're here to provide excellent customer service and make every inter
     }
   ];
   
-  console.log('Sending GPU test initial response:', JSON.stringify(response, null, 2));
+  logger.response(200, callSid, response);
   res.json(response);
 };
 
@@ -340,26 +348,29 @@ Remember: You're here to provide excellent customer service and make every inter
 app.post('/', handleIncomingCall);
 app.post('/webhook/call', handleIncomingCall);
 
-// Conversation webhook - handles speech input and AI responses (EXACT MIRROR structure)
+// Conversation webhook - handles speech input and AI responses
 app.post('/webhook/conversation', async (req, res) => {
   const requestStartTime = Date.now();
-  console.log('\n=== GPU CONVERSATION INPUT ===');
-  console.log(`⏱️  GPU REQUEST START: ${new Date().toISOString()}`);
   const callSid = req.body.call_sid;
+  
+  logger.request('POST', '/webhook/conversation', callSid, req.body);
   
   try {
     let userMessage = '';
     
-    // Extract user speech (EXACT MIRROR)
+    // Extract user speech
     if (req.body.speech && req.body.speech.alternatives && req.body.speech.alternatives[0]) {
       userMessage = req.body.speech.alternatives[0].transcript;
-      console.log(`⏱️  SPEECH-TO-TEXT COMPLETE: +${Date.now() - requestStartTime}ms`);
-      console.log('👤 USER SAID:', userMessage);
+      const sttDuration = Date.now() - requestStartTime;
+      logger.performance('Speech-to-Text', sttDuration, { callSid });
+      logger.conversation(callSid, 'USER', userMessage, { 
+        confidence: req.body.speech.alternatives[0].confidence 
+      });
     }
     
-    // Handle timeout or no speech (EXACT MIRROR)
+    // Handle timeout or no speech
     if (!userMessage || req.body.reason === 'timeout') {
-      console.log(`⏱️  NO SPEECH/TIMEOUT: +${Date.now() - requestStartTime}ms`);
+      logger.warn('No speech detected or timeout', { callSid, reason: req.body.reason });
       const response = [
         {
           "verb": "say",
@@ -425,7 +436,7 @@ app.post('/webhook/conversation', async (req, res) => {
     const callMetrics = performanceMetrics.get(callSid);
     const testMethod = callMetrics?.method || 'gpu-local';
     
-    console.log(`⏱️  USING METHOD: ${testMethod.toUpperCase()}`);
+    logger.info(`Processing with ${testMethod.toUpperCase()} method`, { callSid });
     
     let aiResponse;
     const llmStartTime = Date.now();
@@ -440,19 +451,19 @@ app.post('/webhook/conversation', async (req, res) => {
         aiResponse = await generateOpenAIResponse(conversationHistory);
       }
     } catch (error) {
-      console.log('Primary method failed, trying fallback...');
+      logger.warn('Primary LLM method failed, handling gracefully', { callSid, method: testMethod });
       if (testMethod === 'gpu-local') {
-        console.log('🚨 GPU LOCAL FAILED - This should not happen in 100% open-source mode!');
+        logger.error('Local GPU LLM failed - this should not happen in production', { callSid, error: error.message });
         // In 100% open-source mode, we should NOT fallback to OpenAI
-        // Instead, retry Ollama or return an error message
-        aiResponse = "I'm having trouble with my local AI processing. Let me try again.";
+        aiResponse = "I'm having trouble processing your request. Let me try again.";
       } else {
         aiResponse = await generateOpenAIResponse(conversationHistory);
       }
     }
     
-    console.log(`⏱️  LLM COMPLETE: +${Date.now() - llmStartTime}ms`);
-    console.log('🤖 AI RESPONSE:', aiResponse);
+    const llmDuration = Date.now() - llmStartTime;
+    logger.performance('LLM Complete', llmDuration, { callSid });
+    logger.conversation(callSid, 'AI', aiResponse);
     
     // Add AI response to history
     conversationHistory.push({
@@ -476,7 +487,7 @@ app.post('/webhook/conversation', async (req, res) => {
           audioId = await generateCoquiTTS(aiResponse, callSid);
           audioGenerationTime = Date.now() - audioStartTime;
         } catch (error) {
-          console.log('🚨 GPU TTS FAILED - Retrying with fallback voice...');
+          logger.error('GPU TTS failed - using fallback', { callSid, error: error.message });
           // In 100% open-source mode, we use default TTS instead of paid services
           throw new Error('TTS service unavailable - using system TTS');
         }
@@ -534,11 +545,13 @@ app.post('/webhook/conversation', async (req, res) => {
       ];
     }
     
-    console.log(`⏱️  GPU RESPONSE SENT: +${Date.now() - requestStartTime}ms TOTAL`);
+    const totalDuration = Date.now() - requestStartTime;
+    logger.performance('Total Request', totalDuration, { callSid });
+    logger.response(200, callSid, response);
     res.json(response);
     
   } catch (error) {
-    console.error('Error processing GPU conversation:', error);
+    logger.error('Error processing conversation', { callSid, error: error.message });
     
     const errorResponse = [
       {
@@ -566,18 +579,18 @@ app.post('/webhook/conversation', async (req, res) => {
   }
 });
 
-// Call status webhook (EXACT MIRROR)
+// Call status webhook
 const handleCallStatus = (req, res) => {
-  console.log('\n=== CALL STATUS ===');
-  console.log('Call SID:', req.body.call_sid);
-  console.log('Call Status:', req.body.call_status);
-  console.log('Direction:', req.body.direction);
+  const callSid = req.body.call_sid;
+  const callStatus = req.body.call_status;
+  const direction = req.body.direction;
   
-  if (req.body.call_status === 'completed' || req.body.call_status === 'failed') {
-    const callSid = req.body.call_sid;
+  logger.info('Call status update', { callSid, status: callStatus, direction });
+  
+  if (callStatus === 'completed' || callStatus === 'failed') {
     conversations.delete(callSid);
     performanceMetrics.delete(callSid);
-    console.log(`Cleaned up data for call ${callSid}`);
+    logger.debug(`Cleaned up session data`, { callSid });
   }
   
   res.status(200).send('OK');
@@ -591,7 +604,7 @@ app.get('/audio/:filename', (req, res) => {
   const filename = req.params.filename;
   const filePath = path.join(AUDIO_DIR, filename);
   
-  console.log('Serving audio file:', filePath);
+  logger.debug('Serving cached audio file', { filePath });
   res.sendFile(filePath);
 });
 
@@ -601,11 +614,11 @@ app.get('/audio/generated/:filename', (req, res) => {
   // Look up the audio file by ID
   const audioInfo = audioCache.get(filename);
   if (!audioInfo) {
-    console.error('Audio file not found:', filename);
+    logger.warn('Generated audio file not found', { audioId: filename });
     return res.status(404).send('Audio not found');
   }
   
-  console.log('Serving generated audio:', audioInfo.path);
+  logger.debug('Serving generated audio', { audioId: filename, path: audioInfo.path });
   res.sendFile(audioInfo.path);
 });
 
@@ -720,19 +733,16 @@ app.listen(PORT, async () => {
   // Ensure audio directory exists
   await ensureAudioDir();
   
-  console.log(`\n========================================`);
-  console.log(`GPU-Accelerated Jambonz Server Started`);
-  console.log(`(Drop-in replacement for server.js)`);
-  console.log(`========================================`);
-  console.log(`Port: ${PORT}`);
-  console.log(`URL: http://localhost:${PORT}`);
-  console.log(`\nWebhook endpoints (same as server.js):`);
-  console.log(`  - Call webhook: http://localhost:${PORT}/webhook/call`);
-  console.log(`  - Conversation: http://localhost:${PORT}/webhook/conversation`);
-  console.log(`  - Status: http://localhost:${PORT}/webhook/status`);
-  console.log(`\nGPU Processing Mode:`);
-  console.log(`  - Current: ${testMode.currentMethod}`);
-  console.log(`  - Alternating: ${testMode.alternatePerCall}`);
-  console.log(`  - Fallbacks: Available for all services`);
-  console.log(`========================================\n`);
+  // Intelligent startup logging
+  logger.startup({
+    port: PORT,
+    webhookBase: process.env.WEBHOOK_BASE_URL,
+    services: {
+      ollama: GPU_SERVICES.OLLAMA_URL,
+      tts: GPU_SERVICES.COQUI_TTS_URL,
+      whisper: GPU_SERVICES.FASTER_WHISPER_URL
+    },
+    model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
+    speaker: process.env.VITS_SPEAKER_ID || 'p225'
+  });
 });

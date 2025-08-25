@@ -2,25 +2,53 @@
 set -e
 
 # =============================================================================
-# SIMPLE OLLAMA MODEL INITIALIZATION ENTRYPOINT
+# OLLAMA PRODUCTION MODEL MANAGER
 # =============================================================================
-# Uses only tools available in the Ollama container (no curl dependency)
+# Self-healing model initialization with intelligent logging
 # =============================================================================
 
 # Configuration from environment
 MODEL_NAME="${OLLAMA_MODEL:-llama3.1:8b}"
 SERVER_HOST="${OLLAMA_HOST:-0.0.0.0}"
+SERVER_PORT="${OLLAMA_PORT:-11434}"
 KEEP_ALIVE="${OLLAMA_KEEP_ALIVE:--1}"
 MAX_RETRIES=30
 
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Ollama Model Manager"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model: ${MODEL_NAME}"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Host: ${SERVER_HOST}"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Keep Alive: ${KEEP_ALIVE}"
+# Logging functions
+log_info() {
+    echo "🔵 [INFO] $1"
+}
+
+log_success() {
+    echo "✅ [SUCCESS] $1"
+}
+
+log_warn() {
+    echo "⚠️ [WARN] $1"
+}
+
+log_error() {
+    echo "❌ [ERROR] $1"
+}
+
+log_status() {
+    echo "📊 [STATUS] $1"
+}
+
+# Startup banner
+echo ""
+echo "🤖 =================================="
+echo "🤖  OLLAMA MODEL MANAGER v1.0"
+echo "🤖 =================================="
+log_info "Initializing LLM service..."
+log_status "Model: ${MODEL_NAME}"
+log_status "Host: ${SERVER_HOST}:${SERVER_PORT}"
+log_status "Keep Alive: ${KEEP_ALIVE} (Forever)"
+echo ""
 
 # Cleanup function
 cleanup() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Shutting down Ollama server..."
+    log_warn "Graceful shutdown initiated"
     if [ -n "$OLLAMA_PID" ]; then
         kill "$OLLAMA_PID" 2>/dev/null || true
         wait "$OLLAMA_PID" 2>/dev/null || true
@@ -32,86 +60,98 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Start Ollama server
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting Ollama server..."
+log_info "Starting Ollama server..."
 OLLAMA_HOST="${SERVER_HOST}" /bin/ollama serve &
 OLLAMA_PID=$!
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Ollama server started with PID: ${OLLAMA_PID}"
+log_status "Server PID: ${OLLAMA_PID}"
 
 # Wait for server to be ready
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting for Ollama server to be ready..."
+log_info "Waiting for server readiness..."
 for i in $(seq 1 $MAX_RETRIES); do
     if /bin/ollama list >/dev/null 2>&1; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Ollama server is ready"
+        log_success "Ollama server is ready"
         break
     fi
     
     if [ $i -eq $MAX_RETRIES ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Ollama server failed to start after ${MAX_RETRIES} attempts"
+        log_error "Server failed to start after ${MAX_RETRIES} attempts"
         cleanup
         exit 1
     fi
     
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Waiting for server... ($i/$MAX_RETRIES)"
+    if [ $((i % 5)) -eq 0 ]; then
+        log_info "Still waiting for server... ($i/$MAX_RETRIES)"
+    fi
     sleep 2
 done
 
 # Check if model exists, download if needed
+log_info "Checking model availability..."
 if /bin/ollama list | grep -q "^${MODEL_NAME}"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model ${MODEL_NAME} found locally"
+    log_success "Model ${MODEL_NAME} found locally"
 else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model ${MODEL_NAME} not found, downloading..."
+    log_warn "Model ${MODEL_NAME} not found - downloading..."
     if /bin/ollama pull "${MODEL_NAME}"; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Successfully downloaded model ${MODEL_NAME}"
+        log_success "Model ${MODEL_NAME} downloaded"
     else
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Failed to download model ${MODEL_NAME}"
+        log_error "Failed to download model ${MODEL_NAME}"
         cleanup
         exit 1
     fi
 fi
 
-# Activate model - use simple approach with ollama run
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Activating model ${MODEL_NAME}..."
+# Activate model and load into GPU memory
+log_info "Activating model ${MODEL_NAME}..."
 if echo "ready" | /bin/ollama run "${MODEL_NAME}" >/dev/null 2>&1; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model ${MODEL_NAME} activated successfully"
+    log_success "Model activated and loaded in GPU memory"
 else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Model activation might have failed, but continuing..."
+    log_warn "Model activation response unclear - verifying..."
 fi
 
 # Verify model status
 sleep 2
 if /bin/ollama ps | grep -q "^${MODEL_NAME}"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] SUCCESS: Model ${MODEL_NAME} is loaded and ready"
-    /bin/ollama ps | grep "^${MODEL_NAME}" | while read line; do
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model status: $line"
-    done
+    MODEL_STATUS=$(/bin/ollama ps | grep "^${MODEL_NAME}")
+    log_success "Model ready and loaded in memory"
+    log_status "Details: ${MODEL_STATUS}"
+    
+    echo ""
+    echo "🚀 =================================="
+    echo "🚀  LLM SERVICE READY"
+    echo "🚀 =================================="
+    log_success "Ollama server operational"
+    log_success "Model ${MODEL_NAME} active in GPU"
+    log_success "Endpoint: http://${SERVER_HOST}:${SERVER_PORT}"
+    echo ""
 else
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Model not showing as loaded, but server is running"
+    log_warn "Model not visible in memory, but server is running"
 fi
 
-# Self-healing monitoring loop (simplified)
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting monitoring loop..."
+# Self-healing monitoring loop
+log_info "Starting self-healing monitor..."
+monitor_cycle=0
 while true; do
     sleep 30
+    monitor_cycle=$((monitor_cycle + 1))
     
-    # Check if server is still responding
+    # Check server health
     if ! /bin/ollama list >/dev/null 2>&1; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: Ollama server not responding!"
+        log_error "Server not responding!"
         continue
     fi
     
-    # Check if model is still loaded
+    # Check model health
     if ! /bin/ollama ps | grep -q "^${MODEL_NAME}"; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Model not loaded, attempting to reactivate..."
+        log_warn "Model not loaded - reactivating..."
         if echo "reactivate" | /bin/ollama run "${MODEL_NAME}" >/dev/null 2>&1; then
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] Model reactivated successfully"
+            log_success "Model reactivated"
         else
-            echo "[$(date '+%Y-%m-%d %H:%M:%S')] WARNING: Model reactivation failed"
+            log_error "Reactivation failed"
         fi
     fi
     
-    # Optional: Log status every few cycles for debugging
-    static_counter=$((${static_counter:-0} + 1))
-    if [ $((static_counter % 10)) -eq 0 ]; then
-        echo "[$(date '+%Y-%m-%d %H:%M:%S')] Status check #${static_counter}: Server OK"
+    # Status update every 10 minutes (20 cycles * 30s)
+    if [ $((monitor_cycle % 20)) -eq 0 ]; then
+        log_info "Health check #${monitor_cycle}: All systems operational"
     fi
 done
