@@ -7,6 +7,9 @@
     "start": "node src/voice-app.js",
     "dev": "nodemon src/voice-app.js",
     "test": "node test/test-services.js",
+    "test:outbound": "node test/test-outbound-call.js",
+    "test:outbound:check": "./test/run-test.sh --check",
+    "test:outbound:run": "./test/run-test.sh",
     "docker:build": "docker build -t open-source-voice-ai .",
     "docker:run": "docker run --rm -p 3003:3003 open-source-voice-ai",
     "compose:up": "docker-compose up -d",
@@ -22,7 +25,7 @@
     "voice-ai",
     "gpu",
     "jambonz",
-    "webhook", 
+    "webhook",
     "tts",
     "stt",
     "llm",
@@ -51,14 +54,15 @@
   },
   "dependencies": {
     "axios": "^1.6.0",
-    "dotenv": "^16.3.1", 
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "morgan": "^1.10.0",
     "openai": "^4.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1",
+    "@jambonz/node-client": "^0.4.8",
     "eslint": "^8.50.0",
+    "nodemon": "^3.0.1",
     "prettier": "^3.0.3"
   },
   "optionalDependencies": {
@@ -66,23 +70,47 @@
   },
   "config": {
     "platform": {
-      "os": ["linux"],
-      "arch": ["x64"],
-      "gpu": ["nvidia-cuda"]
+      "os": [
+        "linux"
+      ],
+      "arch": [
+        "x64"
+      ],
+      "gpu": [
+        "nvidia-cuda"
+      ]
     },
     "services": {
       "ollama": {
         "url": "http://ollama:11434",
-        "models": ["llama3.1:8b", "phi3:mini", "mistral:7b"]
+        "models": [
+          "llama3.1:8b",
+          "phi3:mini",
+          "mistral:7b"
+        ]
       },
       "coqui-tts": {
-        "url": "http://coqui-tts:5002", 
+        "url": "http://coqui-tts:5002",
         "model": "tts_models/en/vctk/vits",
-        "speakers": ["p225", "p226", "p227", "p228", "p229", "p230"]
+        "speakers": [
+          "p225",
+          "p226",
+          "p227",
+          "p228",
+          "p229",
+          "p230"
+        ]
       },
       "faster-whisper": {
         "url": "http://faster-whisper:9000",
-        "models": ["base", "small", "medium", "large", "large-v2", "large-v3"]
+        "models": [
+          "base",
+          "small",
+          "medium",
+          "large",
+          "large-v2",
+          "large-v3"
+        ]
       }
     }
   },
