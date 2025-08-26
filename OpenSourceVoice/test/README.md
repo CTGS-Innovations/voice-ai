@@ -74,7 +74,7 @@ npm run test:outbound
 
 ```bash
 # Specify a different phone number
-npm run test:outbound -- --to +15551234567
+npm run test:outbound -- --to +15087374849
 
 # Set custom caller ID
 npm run test:outbound -- --from +15559876543

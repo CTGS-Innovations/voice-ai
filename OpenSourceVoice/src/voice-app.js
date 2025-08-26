@@ -12,6 +12,9 @@ app.use(express.json());
 // Store conversation history per call
 const conversations = new Map();
 
+// Store call start times for conversation management
+const callStartTimes = new Map();
+
 // Store generated audio files
 const audioCache = new Map();
 
@@ -21,14 +24,14 @@ let currentVoicePrompt = null;
 
 // Cache for common responses (instant responses)
 const responseCache = new Map([
-  ['hello', "Hi there! I'm Scout. How can I help you build something awesome today?"],
-  ['hi', "Hey! Scout here. What are you working on?"],
-  ['how are you', "I'm great and ready to help! What's your project?"],
-  ['what can you do', "I help build MVPs fast! Need help with code, architecture, or deployment?"],
-  ['thank you', "You're welcome! Anything else you need?"],
-  ['thanks', "No problem! What's next?"],
-  ['bye', "See you later! Happy building!"],
-  ['goodbye', "Take care! Come back when you need help!"]
+  ['hello', "Hey there! Need help with your account, an order, or scheduling? What brings you in today?"],
+  ['hi', "Hello! What brings you in today? Account issue, order status, or something else?"],
+  ['how are you', "Doing well, thanks! What can be done for you today?"],
+  ['what can you do', "Account verification, order status checks, and appointment scheduling are available. Which do you need?"],
+  ['thank you', "You're very welcome! Anything else needed?"],
+  ['thanks', "Happy to help! Need anything else while we're here?"],
+  ['bye', "Great talking with you! Have a wonderful day!"],
+  ['goodbye', "Take care! Thanks for calling in today!"]
 ]);
 
 // Performance testing data
@@ -418,26 +421,37 @@ const handleIncomingCall = async (req, res) => {
   // Initialize conversation history for this call
   const testMethod = initializeCallPerformance(callSid);
   
+  // Track call start time for conversation management
+  callStartTimes.set(callSid, Date.now());
+  
   conversations.set(callSid, [
     {
       role: "system",
-      content: `You are Scout, a friendly and energetic MVP-scale assistant. You help entrepreneurs and developers build amazing products quickly and efficiently.
+      content: `You are Scout, a customer service agent demonstrating AI-powered customer support capabilities. Your goal is to collect customer information, repeat it back to them for confirmation, and simulate how you could assist with their needs.
 
-Your personality:
-- Always introduce yourself as Scout in your first interaction
-- Be upbeat, helpful, and enthusiastic about building cool stuff
-- Focus on quick wins, MVPs, and getting things done
-- Keep responses super short and actionable (under 40 words)
-- Show genuine interest in helping and solving problems
-- Use a positive, upbeat tone while remaining professional
-- Ask clarifying questions when needed to better assist
+Your personality and approach:
+- Always introduce yourself as Scout in your FIRST interaction only
+- After introduction, avoid using "I" or referring to yourself - just ask questions directly
+- Be professional, friendly, and helpful
+- For account verification, collect: first name, last name, and phone number (avoid email as it's hard to validate via speech)
+- Always repeat back the information collected for confirmation (spell out names if unclear)
+- When someone gives you a phone number, acknowledge it clearly: "Got it, your number is [repeat the number]"
+- When you have all three pieces of info, simulate sending an SMS verification code:
+  * Say "A verification code has been sent to your phone ending in [last 4 digits]"
+  * Ask "What's the 6-digit code you received?"
+  * When they provide any 6 digits, simulate successful verification
+  * Say something like "Perfect! Your identity has been verified."
+- For requests like setting up meetings, employment inquiries, or checking order status, continue after verification
+- Keep responses conversational but under 40 words
+- Ask one question at a time: "What's your first name?" instead of "Can I have your first name?"
+- Be mindful of conversation time - aim to collect key information within the first minute
 
-Remember: You're here to provide excellent customer service and make every interaction pleasant and productive.`
+Remember: You're demonstrating SMS-based two-factor authentication for customer service. After collecting name and phone, simulate the SMS code verification process to show secure authentication. When wrapping up, suggest concrete next steps.`
     }
   ]);
   
   // Generate greeting audio using our configured TTS
-  const greetingText = "Hi! I'm Scout. How can I help you?";
+  const greetingText = "Hi! I'm Scout, your AI customer service assistant. I can help with account inquiries, order status, or scheduling. How can I assist you today?";
   let greetingUrl;
   
   try {
@@ -456,12 +470,15 @@ Remember: You're here to provide excellent customer service and make every inter
         "verb": "gather",
         "input": ["speech"],
         "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-        "timeout": 15,
-        "speechTimeout": 3,
         "recognizer": {
           "vendor": "openai",
           "model": "whisper-1",
-          "language": "en"
+          "language": "en",
+          "vad": {
+            "enable": true,
+            "mode": 1,
+            "voiceMs": 750
+          }
         }
       }
     ];
@@ -478,12 +495,15 @@ Remember: You're here to provide excellent customer service and make every inter
       "verb": "gather",
       "input": ["speech"],
       "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-      "timeout": 15,
-      "speechTimeout": 3,
       "recognizer": {
         "vendor": "openai",
         "model": "whisper-1",
-        "language": "en"
+        "language": "en",
+        "vad": {
+          "enable": true,
+          "mode": 1,
+          "voiceMs": 500
+        }
       }
     }
   ];
@@ -531,12 +551,15 @@ app.post('/webhook/conversation', async (req, res) => {
           "verb": "gather",
           "input": ["speech"],
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-          "timeout": 15,
-          "speechTimeout": 2,
           "recognizer": {
             "vendor": "openai",
             "model": "whisper-1",
-            "language": "en"
+            "language": "en",
+            "vad": {
+              "enable": true,
+              "mode": 1,
+              "voiceMs": 500
+            }
           }
         }
       ];
@@ -563,6 +586,7 @@ app.post('/webhook/conversation', async (req, res) => {
       
       // Clean up conversation history
       conversations.delete(callSid);
+      callStartTimes.delete(callSid);
       return res.json(response);
     }
     
@@ -579,6 +603,24 @@ app.post('/webhook/conversation', async (req, res) => {
       role: "user",
       content: userMessage
     });
+    
+    // Check if conversation has exceeded 60 seconds (only add wrap-up message once)
+    const callStartTime = callStartTimes.get(callSid);
+    const conversationDuration = callStartTime ? (Date.now() - callStartTime) / 1000 : 0;
+    const shouldWrapUp = conversationDuration > 60;
+    
+    // Only add wrap-up message if we haven't already
+    const hasWrapUpMessage = conversationHistory.some(msg => 
+      msg.role === "system" && msg.content.includes("conversation has reached 60 seconds")
+    );
+    
+    if (shouldWrapUp && !hasWrapUpMessage) {
+      // Add wrap-up instruction to the system context (only once)
+      conversationHistory.push({
+        role: "system",
+        content: "The conversation has reached 60 seconds. Please wrap up by summarizing what was discussed and suggesting a follow-up action. Be concise and professional."
+      });
+    }
     
     // Get test method for this call
     const callMetrics = performanceMetrics.get(callSid);
@@ -620,6 +662,13 @@ app.post('/webhook/conversation', async (req, res) => {
     
     const llmDuration = Date.now() - llmStartTime;
     logger.performance('LLM Complete', llmDuration, { callSid });
+    
+    // Check for empty or problematic responses
+    if (!aiResponse || aiResponse.trim() === '' || aiResponse.trim() === '...') {
+      logger.warn('Empty or invalid AI response detected, using fallback', { callSid, response: aiResponse });
+      aiResponse = "Could you repeat that please? Let me make sure I have your information correct.";
+    }
+    
     logger.conversation(callSid, 'AI', aiResponse);
     
     // Add AI response to history
@@ -700,12 +749,15 @@ app.post('/webhook/conversation', async (req, res) => {
           "verb": "gather",
           "input": ["speech"],
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-          "timeout": 15,
-          "speechTimeout": 2,
           "recognizer": {
             "vendor": "openai",
             "model": "whisper-1",
-            "language": "en"
+            "language": "en",
+            "vad": {
+              "enable": true,
+              "mode": 1,
+              "voiceMs": 500
+            }
           }
         }
       ];
@@ -727,12 +779,15 @@ app.post('/webhook/conversation', async (req, res) => {
           "verb": "gather",
           "input": ["speech"],
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-          "timeout": 15,
-          "speechTimeout": 2,
           "recognizer": {
             "vendor": "openai",
             "model": "whisper-1",
-            "language": "en"
+            "language": "en",
+            "vad": {
+              "enable": true,
+              "mode": 1,
+              "voiceMs": 500
+            }
           }
         }
       ];
@@ -758,12 +813,15 @@ app.post('/webhook/conversation', async (req, res) => {
         "verb": "gather",
         "input": ["speech"],
         "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-        "timeout": 15,
-        "speechTimeout": 2,
         "recognizer": {
           "vendor": "openai",
           "model": "whisper-1",
-          "language": "en"
+          "language": "en",
+          "vad": {
+            "enable": true,
+            "mode": 1,
+            "voiceMs": 750
+          }
         }
       }
     ];
@@ -782,6 +840,7 @@ const handleCallStatus = (req, res) => {
   
   if (callStatus === 'completed' || callStatus === 'failed') {
     conversations.delete(callSid);
+    callStartTimes.delete(callSid);
     performanceMetrics.delete(callSid);
     logger.debug(`Cleaned up session data`, { callSid });
   }
