@@ -100,7 +100,8 @@ const JAMBONZ_GATHER_TIMEOUT = parseInt(process.env.JAMBONZ_GATHER_TIMEOUT_S) ||
 logger.info(`🤖 AI Provider: ${aiProvider.toUpperCase()}`);
 logger.info(`📝 TTS Provider: ${process.env.TTS_PROVIDER || 'chatterbox'}`);
 logger.info(`🔄 Test Mode: ${testMode.currentMethod}`);
-logger.info(`⏱️ Jambonz Gather Timeout: ${JAMBONZ_GATHER_TIMEOUT}s (Whisper VAD: 5000ms - TEST MODE)`);
+logger.info(`⏱️ Aligned Timeouts: ${JAMBONZ_GATHER_TIMEOUT}s (Jambonz Record = STT = Response Generation | 60s max recording)`);
+logger.info(`🔧 PROCESSING CHAIN: Jambonz[Gather] → OpenAI[Whisper STT] → Local[${aiProvider.toUpperCase()}] → Local[${process.env.TTS_PROVIDER || 'chatterbox'}] (WORKING VERSION)`);
 
 // 100% Free Open-Source GPU Services
 const GPU_SERVICES = {
@@ -365,7 +366,10 @@ async function generateElevenLabsAudio(text, callSid) {
 // GPU-Powered Speech Recognition using faster-whisper (FREE)
 async function transcribeFasterWhisper(audioBuffer) {
   const transcribeStartTime = Date.now();
-  logger.debug('Starting Faster-Whisper transcription');
+  logger.info('🎤 [LOCAL-FASTER-WHISPER] Starting transcription', { 
+    service: 'Faster-Whisper Local GPU', 
+    audioSize: `${(audioBuffer.byteLength / 1024).toFixed(1)}KB` 
+  });
   
   try {
     const formData = new FormData();
@@ -380,14 +384,27 @@ async function transcribeFasterWhisper(audioBuffer) {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: parseInt(process.env.STT_TIMEOUT_MS) || 30000 // Allow longer transcription for extended speech
+      timeout: (JAMBONZ_GATHER_TIMEOUT * 1000) // Align STT timeout with Jambonz gather timeout
     });
     
     const transcript = response.data.text;
-    logger.performance('Speech Recognition', Date.now() - transcribeStartTime);
+    const duration = Date.now() - transcribeStartTime;
+    logger.info('✅ [LOCAL-FASTER-WHISPER] Transcription completed', { 
+      service: 'Faster-Whisper Local GPU',
+      duration: `${duration}ms`,
+      transcript: transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''),
+      success: true
+    });
+    logger.performance('Speech Recognition', duration);
     return transcript;
   } catch (error) {
-    console.error(`⏱️  GPU FASTER-WHISPER ERROR: +${Date.now() - transcribeStartTime}ms -`, error.message);
+    const duration = Date.now() - transcribeStartTime;
+    logger.error('❌ [LOCAL-FASTER-WHISPER] Transcription failed', { 
+      service: 'Faster-Whisper Local GPU',
+      duration: `${duration}ms`,
+      error: error.message,
+      success: false
+    });
     throw error;
   }
 }
@@ -534,7 +551,7 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
         "vad": {
           "enable": true,
           "mode": 1,
-          "voiceMs": 5000
+          "voiceMs": 15000
         }
       }
     }
@@ -559,7 +576,7 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
         "vad": {
           "enable": true,
           "mode": 1,
-          "voiceMs": 5000
+          "voiceMs": 15000
         }
       }
     }
@@ -587,7 +604,7 @@ app.post('/webhook/conversation', async (req, res) => {
   try {
     let userMessage = '';
     
-    // Extract user speech
+    // Extract user speech from OpenAI Whisper (back to working version)
     if (req.body.speech && req.body.speech.alternatives && req.body.speech.alternatives[0]) {
       userMessage = req.body.speech.alternatives[0].transcript;
       const sttDuration = Date.now() - requestStartTime;
@@ -595,10 +612,11 @@ app.post('/webhook/conversation', async (req, res) => {
       
       // Enhanced user input logging
       const confidence = req.body.speech.alternatives[0].confidence;
-      logUserInput(callSid, userMessage, confidence, '- SPEECH RECOGNIZED');
+      logUserInput(callSid, userMessage, confidence, '- [OPENAI-WHISPER] SPEECH RECOGNIZED');
       
       logger.conversation(callSid, 'USER', userMessage, { 
-        confidence: confidence 
+        confidence: confidence,
+        provider: 'OpenAI Whisper API'
       });
     }
     
@@ -625,7 +643,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 5000
+              "voiceMs": 8000
             }
           }
         }
@@ -746,7 +764,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 5000
+              "voiceMs": 8000
             }
           }
         }
@@ -841,16 +859,16 @@ app.post('/webhook/conversation', async (req, res) => {
     let response;
     const audioStartTime = Date.now();
     
-    // Create a timeout promise that returns a fallback response after 3.5 seconds
+    // Create a timeout promise aligned with Jambonz gather timeout
     const timeoutPromise = new Promise((resolve) => {
       setTimeout(() => {
         logger.warn('[SYSTEM] [TIMEOUT] Response generation timeout - using fallback', { callSid });
         resolve({
           audioId: null,
-          audioGenerationTime: 3500,
+          audioGenerationTime: JAMBONZ_GATHER_TIMEOUT * 1000,
           timedOut: true
         });
-      }, 3500); // 3.5 seconds to stay under Jambonz timeout
+      }, (JAMBONZ_GATHER_TIMEOUT * 1000)); // Align with 45-second Jambonz gather timeout
     });
     
     // Create the actual generation promise
@@ -937,7 +955,7 @@ app.post('/webhook/conversation', async (req, res) => {
               "vad": {
                 "enable": true,
                 "mode": 1,
-                "voiceMs": 5000
+                "voiceMs": 8000
               }
             }
           }
@@ -962,7 +980,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 5000
+              "voiceMs": 8000
             }
           }
         }
@@ -996,7 +1014,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 5000
+              "voiceMs": 8000
             }
           }
         }
@@ -1037,7 +1055,7 @@ app.post('/webhook/conversation', async (req, res) => {
           "vad": {
             "enable": true,
             "mode": 1,
-            "voiceMs": 5000
+            "voiceMs": 8000
           }
         }
       }

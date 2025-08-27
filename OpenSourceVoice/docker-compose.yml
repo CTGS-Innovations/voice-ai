@@ -400,7 +400,7 @@ services:
       - LLM_TEMPERATURE=0.7
       - LLM_MAX_TOKENS=100
       - TTS_TIMEOUT_MS=30000
-      - STT_TIMEOUT_MS=30000
+      - STT_TIMEOUT_MS=45000
       
       # Webhook Configuration (update with your Jambonz server URL)
       - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-https://talk3.mvp-scale.com}
