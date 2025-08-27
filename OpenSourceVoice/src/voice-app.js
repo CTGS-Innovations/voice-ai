@@ -274,6 +274,102 @@ async function generateChatterboxTTS(text, callSid) {
   }
 }
 
+// Enhanced Chatterbox TTS with test configuration support
+async function generateChatterboxTTSWithConfig(text, voiceSample = 'default', speed = 1.0, timeout = 30000) {
+  const generateStartTime = Date.now();
+  const audioId = crypto.randomBytes(16).toString('hex');
+  const audioPath = path.join(AUDIO_DIR, `${audioId}.wav`);
+  const testCallSid = `test-${audioId.substring(0, 8)}`;
+  
+  logger.audio('TTS_TEST_START', { 
+    provider: 'Chatterbox TTS Test', 
+    text: text.substring(0, 30) + '...', 
+    voiceSample, 
+    speed, 
+    timeout,
+    testCallSid 
+  });
+  
+  try {
+    // Enhanced payload with proper Chatterbox TTS API format
+    const payload = {
+      text: text,
+      speed_factor: speed
+    };
+    
+    // Voice cloning support - your container DOES support this via audio_prompt_path!
+    if (voiceSample && voiceSample !== 'default' && voiceSample !== 'custom') {
+      try {
+        const voicePath = path.join(__dirname, '../voices', voiceSample);
+        await fs.access(voicePath);
+        
+        // Your API expects audio_prompt_path for voice cloning
+        payload.audio_prompt_path = `/app/voices/${voiceSample}`;
+        
+        logger.info(`🎭 [VOICE-CLONE] Using voice cloning with: ${voiceSample} → ${payload.audio_prompt_path}`, { testCallSid });
+      } catch (error) {
+        logger.warn(`Voice file not found: ${voiceSample}, using default voice`, { testCallSid });
+      }
+    } else {
+      logger.info(`🎭 [VOICE-DEFAULT] Using default voice (no voice cloning)`, { testCallSid });
+    }
+    
+    logger.debug(`Generating test speech with Chatterbox TTS`, { 
+      testCallSid, 
+      textLength: text.length,
+      voiceSample: voiceSample || 'default',
+      speed,
+      timeout,
+      payload: JSON.stringify(payload, null, 2)
+    });
+    
+    // Use Chatterbox TTS with simple JSON format
+    const response = await axios.post(`${GPU_SERVICES.CHATTERBOX_TTS_URL}/tts`, payload, {
+      responseType: 'arraybuffer',
+      timeout: timeout,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    // Save audio file
+    await fs.writeFile(audioPath, response.data);
+    
+    // Store in cache for serving with test metadata
+    audioCache.set(audioId, {
+      path: audioPath,
+      callSid: testCallSid,
+      createdAt: Date.now(),
+      method: 'chatterbox-test',
+      testConfig: {
+        voiceSample: voiceSample || 'default',
+        speed,
+        timeout
+      }
+    });
+    
+    const duration = Date.now() - generateStartTime;
+    logger.performance('TTS Test Generation', duration, { 
+      testCallSid, 
+      audioId, 
+      provider: 'Chatterbox TTS Test',
+      voiceSample: voiceSample || 'default',
+      speed 
+    });
+    return audioId;
+  } catch (error) {
+    const duration = Date.now() - generateStartTime;
+    logger.error(`TTS test generation failed after ${duration}ms`, { 
+      testCallSid, 
+      provider: 'Chatterbox TTS Test', 
+      voiceSample,
+      speed,
+      error: error.message 
+    });
+    throw error;
+  }
+}
+
 // GPU-Powered LLM using Ollama (LOCAL ONLY)
 async function generateOllamaResponse(messages) {
   const generateStartTime = Date.now();
@@ -1216,6 +1312,58 @@ app.get('/vad-test', (req, res) => {
   res.sendFile(path.join(__dirname, 'whisper-vad-test.html'));
 });
 
+// Chatterbox TTS Test Dashboard
+app.get('/tts-test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'chatterbox-tts-test.html'));
+});
+
+// API endpoint to get available voice samples
+app.get('/api/voice-samples', async (req, res) => {
+  try {
+    const voicesDir = path.join(__dirname, '../voices');
+    
+    // Check if voices directory exists
+    try {
+      await fs.access(voicesDir);
+    } catch {
+      return res.json({
+        success: true,
+        voices: [],
+        message: 'No voices directory found'
+      });
+    }
+    
+    // Read voice files from directory
+    const files = await fs.readdir(voicesDir);
+    const voiceFiles = files
+      .filter(file => file.endsWith('.wav') || file.endsWith('.mp3'))
+      .map(file => {
+        const stats = require('fs').statSync(path.join(voicesDir, file));
+        return {
+          filename: file,
+          name: file.replace(/\.(wav|mp3)$/i, ''),
+          size: `${(stats.size / 1024 / 1024).toFixed(1)}MB`,
+          type: file.toLowerCase().endsWith('.wav') ? 'wav' : 'mp3'
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    
+    logger.debug(`Found ${voiceFiles.length} voice samples in ${voicesDir}`);
+    
+    res.json({
+      success: true,
+      voices: voiceFiles,
+      count: voiceFiles.length
+    });
+  } catch (error) {
+    logger.error('Error reading voice samples', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Middleware to handle raw body for audio upload
 app.use('/api/whisper-test', express.raw({ type: 'application/octet-stream', limit: '10mb' }));
 
@@ -1254,6 +1402,49 @@ app.post('/api/whisper-test', async (req, res) => {
   }
 });
 
+// API endpoint for Chatterbox TTS testing
+app.post('/api/chatterbox-test', async (req, res) => {
+  try {
+    const { text, voiceSample, speed, timeout } = req.body;
+    
+    if (!text || text.trim() === '') {
+      throw new Error('No text provided for TTS generation');
+    }
+    
+    logger.info('🧪 [TTS-TEST] Processing TTS request', {
+      textLength: text.length,
+      voiceSample: voiceSample || 'default',
+      speed: speed || 1.0,
+      timeout: timeout || 30000
+    });
+    
+    const startTime = Date.now();
+    
+    // Generate audio using Chatterbox TTS with test configuration
+    const audioId = await generateChatterboxTTSWithConfig(text, voiceSample, speed, timeout);
+    const processingTime = Date.now() - startTime;
+    
+    const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
+    
+    res.json({
+      success: true,
+      text: text,
+      audioId: audioId,
+      audioUrl: audioUrl,
+      processingTime,
+      voiceSample: voiceSample || 'default',
+      speed: speed || 1.0,
+      service: 'chatterbox-tts'
+    });
+  } catch (error) {
+    logger.error('❌ [TTS-TEST] Test TTS generation failed', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Root endpoint (EXACT MIRROR)
 app.get('/', (req, res) => {
   res.json({ 
@@ -1271,7 +1462,9 @@ app.get('/', (req, res) => {
       'GET /audio/:filename - Serve audio files',
       'GET /audio/generated/:filename - Serve generated audio',
       'GET /vad-test - Whisper VAD Testing Dashboard',
-      'POST /api/whisper-test - Direct Whisper API testing'
+      'POST /api/whisper-test - Direct Whisper API testing',
+      'GET /tts-test - Chatterbox TTS Testing Dashboard',
+      'POST /api/chatterbox-test - Direct Chatterbox TTS API testing'
     ]
   });
 });
