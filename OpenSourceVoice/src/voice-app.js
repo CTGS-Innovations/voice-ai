@@ -101,7 +101,7 @@ logger.info(`🤖 AI Provider: ${aiProvider.toUpperCase()}`);
 logger.info(`📝 TTS Provider: ${process.env.TTS_PROVIDER || 'chatterbox'}`);
 logger.info(`🔄 Test Mode: ${testMode.currentMethod}`);
 logger.info(`⏱️ Aligned Timeouts: ${JAMBONZ_GATHER_TIMEOUT}s (Jambonz Record = STT = Response Generation | 60s max recording)`);
-logger.info(`🔧 PROCESSING CHAIN: Jambonz[Gather] → OpenAI[Whisper STT] → Local[${aiProvider.toUpperCase()}] → Local[${process.env.TTS_PROVIDER || 'chatterbox'}] (WORKING VERSION)`);
+logger.info(`🔧 PROCESSING CHAIN: Jambonz[Gather] → OpenAI[Whisper-NO-VAD] → Local[${aiProvider.toUpperCase()}] → Local[${process.env.TTS_PROVIDER || 'chatterbox'}] (VAD DISABLED - TIMEOUT ONLY)`);
 
 // 100% Free Open-Source GPU Services
 const GPU_SERVICES = {
@@ -549,9 +549,7 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
         "model": "whisper-1",
         "language": "en",
         "vad": {
-          "enable": true,
-          "mode": 1,
-          "voiceMs": 15000
+          "enable": false
         }
       }
     }
@@ -574,9 +572,7 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
         "model": "whisper-1",
         "language": "en",
         "vad": {
-          "enable": true,
-          "mode": 1,
-          "voiceMs": 15000
+          "enable": false
         }
       }
     }
@@ -612,11 +608,11 @@ app.post('/webhook/conversation', async (req, res) => {
       
       // Enhanced user input logging
       const confidence = req.body.speech.alternatives[0].confidence;
-      logUserInput(callSid, userMessage, confidence, '- [OPENAI-WHISPER] SPEECH RECOGNIZED');
+      logUserInput(callSid, userMessage, confidence, '- [LOCAL-CUSTOM-WHISPER] SPEECH RECOGNIZED');
       
       logger.conversation(callSid, 'USER', userMessage, { 
         confidence: confidence,
-        provider: 'OpenAI Whisper API'
+        provider: 'Local Custom Faster-Whisper'
       });
     }
     
@@ -641,9 +637,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "model": "whisper-1",
             "language": "en",
             "vad": {
-              "enable": true,
-              "mode": 1,
-              "voiceMs": 8000
+              "enable": false
             }
           }
         }
@@ -762,9 +756,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "model": "whisper-1",
             "language": "en",
             "vad": {
-              "enable": true,
-              "mode": 1,
-              "voiceMs": 8000
+              "enable": false
             }
           }
         }
@@ -953,9 +945,7 @@ app.post('/webhook/conversation', async (req, res) => {
               "model": "whisper-1",
               "language": "en",
               "vad": {
-                "enable": true,
-                "mode": 1,
-                "voiceMs": 8000
+                "enable": false
               }
             }
           }
@@ -978,9 +968,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "model": "whisper-1",
             "language": "en",
             "vad": {
-              "enable": true,
-              "mode": 1,
-              "voiceMs": 8000
+              "enable": false
             }
           }
         }
@@ -1012,9 +1000,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "model": "whisper-1",
             "language": "en",
             "vad": {
-              "enable": true,
-              "mode": 1,
-              "voiceMs": 8000
+              "enable": false
             }
           }
         }
@@ -1055,7 +1041,7 @@ app.post('/webhook/conversation', async (req, res) => {
           "vad": {
             "enable": true,
             "mode": 1,
-            "voiceMs": 8000
+            "voiceMs": 30000
           }
         }
       }
