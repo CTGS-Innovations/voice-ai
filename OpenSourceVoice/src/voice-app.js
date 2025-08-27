@@ -438,8 +438,8 @@ Your personality and approach:
 - When someone gives you a phone number, acknowledge it clearly: "Got it, your number is [repeat the number]"
 - When you have all three pieces of info, simulate sending an SMS verification code:
   * Say "A verification code has been sent to your phone ending in [last 4 digits]"
-  * Ask "What's the 6-digit code you received?"
-  * When they provide any 6 digits, simulate successful verification
+  * Ask "What's the 4-digit code you received?"
+  * When they provide any 4 digits, simulate successful verification
   * Say something like "Perfect! Your identity has been verified."
 - For requests like setting up meetings, employment inquiries, or checking order status, continue after verification
 - Keep responses conversational but under 40 words
@@ -451,7 +451,7 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
   ]);
   
   // Generate greeting audio using our configured TTS
-  const greetingText = "Hi! I'm Scout, your AI customer service assistant. I can help with account inquiries, order status, or scheduling. How can I assist you today?";
+  const greetingText = "Hi! I'm Scout, an AI assistant demonstrating customer service capabilities. This is a simulation only. I can show you account verification, order status checks, or scheduling. What would you like to try?";
   let greetingUrl;
   
   try {
