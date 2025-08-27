@@ -418,6 +418,8 @@
                 this.isRecording = false;
                 this.audioContext = null;
                 this.analyser = null;
+                this.mediaStream = null; // Store stream reference for cleanup
+                this.audioSource = null; // Store source for cleanup
                 this.silenceStart = null;
                 this.recordingStart = null;
                 this.animationId = null;
@@ -478,6 +480,46 @@
                 }
             }
 
+            async cleanupResources() {
+                // Disconnect audio source
+                if (this.audioSource) {
+                    try {
+                        this.audioSource.disconnect();
+                    } catch (e) {
+                        // Ignore if already disconnected
+                    }
+                    this.audioSource = null;
+                }
+                
+                // Close audio context
+                if (this.audioContext && this.audioContext.state !== 'closed') {
+                    try {
+                        await this.audioContext.close();
+                    } catch (e) {
+                        this.log('Error closing audio context', 'warn');
+                    }
+                    this.audioContext = null;
+                }
+                
+                // Stop all tracks in media stream
+                if (this.mediaStream) {
+                    this.mediaStream.getTracks().forEach(track => {
+                        track.stop();
+                    });
+                    this.mediaStream = null;
+                }
+                
+                // Clear media recorder
+                if (this.mediaRecorder) {
+                    this.mediaRecorder.ondataavailable = null;
+                    this.mediaRecorder.onstop = null;
+                    this.mediaRecorder = null;
+                }
+                
+                // Clear analyser
+                this.analyser = null;
+            }
+
             async toggleRecording() {
                 if (this.isRecording) {
                     this.stopRecording(true);
@@ -488,6 +530,9 @@
 
             async startRecording() {
                 try {
+                    // Clean up any existing resources first
+                    await this.cleanupResources();
+                    
                     this.log('Requesting microphone access...');
                     const stream = await navigator.mediaDevices.getUserMedia({ 
                         audio: {
@@ -497,6 +542,7 @@
                         } 
                     });
                     
+                    this.mediaStream = stream; // Store for cleanup
                     this.setupAudioContext(stream);
                     this.setupMediaRecorder(stream);
                     
@@ -532,8 +578,8 @@
                 this.analyser = this.audioContext.createAnalyser();
                 this.analyser.fftSize = 256;
                 
-                const source = this.audioContext.createMediaStreamSource(stream);
-                source.connect(this.analyser);
+                this.audioSource = this.audioContext.createMediaStreamSource(stream);
+                this.audioSource.connect(this.analyser);
             }
 
             setupMediaRecorder(stream) {
@@ -639,13 +685,7 @@
                     this.mediaRecorder.stop();
                 }
                 
-                // Stop audio context
-                if (this.audioContext) {
-                    this.audioContext.close();
-                    this.audioContext = null;
-                }
-                
-                // Clear intervals
+                // Clear intervals first
                 if (this.silenceCheckInterval) {
                     clearInterval(this.silenceCheckInterval);
                     this.silenceCheckInterval = null;
@@ -655,6 +695,11 @@
                     cancelAnimationFrame(this.animationId);
                     this.animationId = null;
                 }
+                
+                // Clean up audio resources after a small delay to ensure recorder has stopped
+                setTimeout(() => {
+                    this.cleanupResources();
+                }, 100);
                 
                 // Update UI
                 this.elements.recordBtn.classList.remove('recording');
@@ -678,6 +723,8 @@
             async processRecording() {
                 if (this.audioChunks.length === 0) {
                     this.log('No audio data to process', 'warn');
+                    // Clean up resources even if no data
+                    await this.cleanupResources();
                     return;
                 }
                 
@@ -703,6 +750,8 @@
                 } finally {
                     this.elements.recordingStatus.className = 'status-indicator active';
                     this.elements.recordingText.textContent = 'Ready';
+                    // Ensure full cleanup after processing
+                    await this.cleanupResources();
                 }
             }
 
