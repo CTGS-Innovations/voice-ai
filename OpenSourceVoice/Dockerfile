@@ -46,6 +46,7 @@ RUN apk add --no-cache \
     curl \
     ca-certificates \
     tzdata \
+    ffmpeg \
     && rm -rf /var/cache/apk/*
 
 # Set working directory

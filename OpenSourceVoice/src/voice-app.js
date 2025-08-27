@@ -1317,6 +1317,132 @@ app.get('/tts-test', (req, res) => {
   res.sendFile(path.join(__dirname, 'chatterbox-tts-test.html'));
 });
 
+// API endpoint to save voice clone recording with custom name
+app.post('/api/save-voice-clone', express.raw({ type: 'multipart/form-data', limit: '50mb' }), async (req, res) => {
+  try {
+    // Parse multipart form data manually
+    const boundary = req.headers['content-type'].split('boundary=')[1];
+    const bodyString = req.body.toString('binary');
+    const parts = bodyString.split(`--${boundary}`);
+    
+    let audioData = null;
+    let voiceName = 'unnamed';
+    let displayName = 'Unnamed Voice';
+    
+    // Extract form fields
+    for (const part of parts) {
+      if (part.includes('Content-Disposition')) {
+        if (part.includes('name="audio"')) {
+          const dataStart = part.indexOf('\r\n\r\n') + 4;
+          const dataEnd = part.lastIndexOf('\r\n');
+          audioData = Buffer.from(part.substring(dataStart, dataEnd), 'binary');
+        } else if (part.includes('name="name"')) {
+          const dataStart = part.indexOf('\r\n\r\n') + 4;
+          const dataEnd = part.lastIndexOf('\r\n');
+          voiceName = part.substring(dataStart, dataEnd).trim();
+        } else if (part.includes('name="displayName"')) {
+          const dataStart = part.indexOf('\r\n\r\n') + 4;
+          const dataEnd = part.lastIndexOf('\r\n');
+          displayName = part.substring(dataStart, dataEnd).trim();
+        }
+      }
+    }
+    
+    if (!audioData) {
+      throw new Error('No audio data received');
+    }
+    
+    // Use /tmp for temporary files (always writable)
+    const tempDir = '/tmp/voice-recordings';
+    await fs.mkdir(tempDir, { recursive: true });
+    
+    const tempWebmPath = path.join(tempDir, `recording_${Date.now()}.webm`);
+    const tempMp3Path = path.join(tempDir, `${voiceName}_${Date.now()}.mp3`);
+    
+    // Save the WebM data to temp directory
+    await fs.writeFile(tempWebmPath, audioData);
+    logger.info(`🎤 [VOICE-CLONE] Saving voice for ${displayName}: ${tempWebmPath} (${(audioData.length / 1024).toFixed(1)}KB)`);
+    
+    // Convert and optimize audio using ffmpeg
+    const { exec } = require('child_process');
+    
+    // High-fidelity MP3 conversion with optimization:
+    // - Convert to mono for efficiency (voice doesn't need stereo)
+    // - Sample rate: 48kHz for high quality
+    // - Bitrate: 128k VBR for excellent quality with smaller files
+    // - Apply sophisticated audio processing:
+    //   * Remove DC offset and very low frequencies (highpass at 80Hz)
+    //   * Remove unnecessary high frequencies (lowpass at 12kHz for voice)
+    //   * De-noise using afftdn (FFT denoiser)
+    //   * Normalize loudness to broadcast standard (-16 LUFS)
+    //   * Apply gentle compression to even out dynamics
+    //   * Add subtle limiting to prevent clipping
+    const ffmpegCmd = [
+      'ffmpeg',
+      '-i', `"${tempWebmPath}"`,
+      '-af', '"highpass=f=80:poles=2, lowpass=f=12000:poles=2, afftdn=nf=-25, loudnorm=I=-16:TP=-1.5:LRA=11, acompressor=threshold=0.089:ratio=4:attack=5:release=50:knee=8:makeup=2, alimiter=limit=0.95"',
+      '-codec:a', 'libmp3lame',
+      '-q:a', '2',  // VBR quality 2 (high quality, ~190 kbps average)
+      '-ar', '48000',  // 48kHz sample rate for clarity
+      '-ac', '1',  // Mono channel
+      '-joint_stereo', '0',  // Force mono encoding
+      '-y',
+      `"${tempMp3Path}"`
+    ].join(' ');
+    
+    await new Promise((resolve, reject) => {
+      exec(ffmpegCmd, (error) => {
+        if (error) {
+          logger.error('ffmpeg conversion error:', error);
+          reject(new Error('Audio conversion failed'));
+        } else {
+          resolve();
+        }
+      });
+    });
+    
+    // Now copy to the voices directory (mounted volume)
+    const voicesDir = '/app/voices';
+    const finalFilename = `${voiceName}.mp3`;
+    const finalPath = path.join(voicesDir, finalFilename);
+    
+    // Ensure voices directory exists
+    await fs.mkdir(voicesDir, { recursive: true });
+    
+    // Copy the processed MP3 file to the final location
+    await fs.copyFile(tempMp3Path, finalPath);
+    
+    // Clean up temp files
+    await fs.unlink(tempWebmPath).catch(() => {});
+    await fs.unlink(tempMp3Path).catch(() => {});
+    
+    const stats = await fs.stat(finalPath);
+    // Calculate compression ratio and sizes in MB
+    const originalSizeMB = audioData.length / 1024 / 1024;
+    const finalSizeMB = stats.size / 1024 / 1024;
+    const compressionRatio = ((1 - (finalSizeMB / originalSizeMB)) * 100).toFixed(1);
+    
+    logger.info(`🎤 [VOICE-CLONE] Saved ${displayName}'s voice: ${finalFilename}`);
+    logger.info(`📊 [VOICE-CLONE] Size: ${finalSizeMB.toFixed(1)}MB (compressed ${compressionRatio}% from ${originalSizeMB.toFixed(1)}MB WebM)`);
+    logger.info(`🎵 [VOICE-CLONE] Format: MP3, 48kHz, Mono, VBR ~190kbps with professional audio processing`);
+    
+    res.json({
+      success: true,
+      filename: finalFilename,
+      displayName: displayName,
+      size: `${finalSizeMB.toFixed(1)}MB`,
+      message: `Voice clone "${displayName}" saved successfully`
+    });
+    
+  } catch (error) {
+    logger.error('Failed to save voice clone:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // API endpoint to get available voice samples
 app.get('/api/voice-samples', async (req, res) => {
   try {

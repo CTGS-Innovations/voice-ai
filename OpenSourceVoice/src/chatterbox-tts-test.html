@@ -150,6 +150,72 @@
             transform: translateY(-1px);
         }
 
+        .voice-recording-section {
+            background: #fff3cd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 15px;
+            border: 1px solid #ffc107;
+        }
+
+        .voice-recording-section h4 {
+            color: #333;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .recording-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .record-voice-btn, .playback-voice-btn, .save-voice-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .record-voice-btn {
+            background: #dc3545;
+            color: white;
+        }
+
+        .record-voice-btn.recording {
+            background: #ff6b6b;
+            animation: pulse 1s infinite;
+        }
+
+        .playback-voice-btn {
+            background: #17a2b8;
+            color: white;
+        }
+
+        .save-voice-btn {
+            background: #28a745;
+            color: white;
+        }
+
+        .delete-recording-btn {
+            background: #dc3545;
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .record-voice-btn:hover, .playback-voice-btn:hover, .save-voice-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+
         .controls {
             display: flex;
             gap: 15px;
@@ -528,6 +594,7 @@
                     <label>Voice Sample:</label>
                     <select id="voiceSample">
                         <option value="default">Default Synthetic Voice</option>
+                        <option value="" disabled>── Recorded Voices ──</option>
                         <option value="custom">Custom URL/Path</option>
                     </select>
                 </div>
@@ -551,6 +618,32 @@
                         <option value="false">No (Manual)</option>
                     </select>
                 </div>
+            </div>
+
+            <div class="voice-recording-section">
+                <h4>🎤 Record Your Voice for Cloning</h4>
+                <p style="font-size: 12px; color: #666; margin: 5px 0;">Record 10-15 seconds of your voice for best cloning results</p>
+                <div class="voice-name-input" style="margin-bottom: 10px;">
+                    <input type="text" id="voiceName" placeholder="Enter your name (e.g., John, Sarah, Alex)" 
+                           style="padding: 8px 12px; border: 1px solid #ffc107; border-radius: 6px; width: 300px; font-size: 14px;">
+                </div>
+                <div class="recording-controls">
+                    <button id="recordVoiceBtn" class="record-voice-btn">
+                        <span id="recordVoiceIcon">🔴</span>
+                        <span id="recordVoiceText">Record Voice</span>
+                    </button>
+                    <button id="playbackVoiceBtn" class="playback-voice-btn" style="display: none;">
+                        ▶️ Preview
+                    </button>
+                    <button id="saveVoiceBtn" class="save-voice-btn" style="display: none;">
+                        💾 Save Voice
+                    </button>
+                    <button id="deleteRecordingBtn" class="delete-recording-btn" style="display: none;">
+                        🗑️ Delete
+                    </button>
+                    <span id="recordingTimer" style="margin-left: 10px; font-weight: bold; display: none;">0:00</span>
+                </div>
+                <div id="voiceRecordingStatus" style="margin-top: 10px; font-size: 12px; color: #666;"></div>
             </div>
 
             <div class="pre-cached-responses">
@@ -665,6 +758,11 @@
                     failures: 0
                 };
                 this.currentTiming = null;
+                this.voiceRecorder = null;
+                this.voiceRecordingChunks = [];
+                this.recordedVoiceBlob = null;
+                this.voiceRecordingTimer = null;
+                this.voiceRecordingStartTime = null;
                 
                 this.initializeElements();
                 this.initializeEventListeners();
@@ -710,7 +808,16 @@
                     avgSttTime: document.getElementById('avgSttTime'),
                     successRate: document.getElementById('successRate'),
                     timingSwimlane: document.getElementById('timingSwimlane'),
-                    timingStatus: document.getElementById('timingStatus')
+                    timingStatus: document.getElementById('timingStatus'),
+                    recordVoiceBtn: document.getElementById('recordVoiceBtn'),
+                    recordVoiceIcon: document.getElementById('recordVoiceIcon'),
+                    recordVoiceText: document.getElementById('recordVoiceText'),
+                    playbackVoiceBtn: document.getElementById('playbackVoiceBtn'),
+                    saveVoiceBtn: document.getElementById('saveVoiceBtn'),
+                    deleteRecordingBtn: document.getElementById('deleteRecordingBtn'),
+                    recordingTimer: document.getElementById('recordingTimer'),
+                    voiceRecordingStatus: document.getElementById('voiceRecordingStatus'),
+                    voiceName: document.getElementById('voiceName')
                 };
             }
 
@@ -728,6 +835,12 @@
                         this.testTTS();
                     }
                 });
+                
+                // Voice recording controls
+                this.elements.recordVoiceBtn.addEventListener('click', () => this.toggleVoiceRecording());
+                this.elements.playbackVoiceBtn.addEventListener('click', () => this.playbackRecordedVoice());
+                this.elements.saveVoiceBtn.addEventListener('click', () => this.saveVoiceClone());
+                this.elements.deleteRecordingBtn.addEventListener('click', () => this.deleteRecording());
             }
 
             async loadVoiceSamples() {
@@ -748,12 +861,17 @@
                         voiceSelect.innerHTML = '';
                         defaultOptions.forEach(opt => voiceSelect.appendChild(opt));
                         
-                        // Add voice samples
+                        // Find the separator option
+                        const separatorOption = Array.from(voiceSelect.options).find(opt => opt.disabled && opt.textContent.includes('Recorded'));
+                        const customOption = voiceSelect.querySelector('option[value="custom"]');
+                        
+                        // Add voice samples after the separator
                         data.voices.forEach(voice => {
                             const option = document.createElement('option');
                             option.value = voice.filename;
                             option.textContent = `${voice.name} (${voice.size})`;
-                            voiceSelect.insertBefore(option, voiceSelect.lastElementChild);
+                            // Insert before custom option
+                            voiceSelect.insertBefore(option, customOption);
                         });
                         
                         this.log(`Loaded ${data.voices.length} voice samples`);
@@ -1325,6 +1443,214 @@
                     const voiceName = this.elements.voiceSample.options[this.elements.voiceSample.selectedIndex].text;
                     cloningStep.querySelector('.timing-step-label').textContent = `Voice Cloning (${voiceName})`;
                 }
+            }
+            
+            async toggleVoiceRecording() {
+                if (this.voiceRecorder && this.voiceRecorder.state === 'recording') {
+                    this.stopVoiceRecording();
+                } else {
+                    await this.startVoiceRecording();
+                }
+            }
+            
+            async startVoiceRecording() {
+                try {
+                    this.elements.voiceRecordingStatus.textContent = 'Initializing microphone...';
+                    
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        audio: {
+                            echoCancellation: true,
+                            noiseSuppression: true,
+                            autoGainControl: true,
+                            sampleRate: 44100
+                        } 
+                    });
+                    
+                    this.voiceRecordingChunks = [];
+                    this.voiceRecorder = new MediaRecorder(stream, {
+                        mimeType: 'audio/webm'
+                    });
+                    
+                    this.voiceRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            this.voiceRecordingChunks.push(event.data);
+                        }
+                    };
+                    
+                    this.voiceRecorder.onstop = () => {
+                        const blob = new Blob(this.voiceRecordingChunks, { type: 'audio/webm' });
+                        this.recordedVoiceBlob = blob;
+                        
+                        // Show preview, save, and delete buttons
+                        this.elements.playbackVoiceBtn.style.display = 'inline-block';
+                        this.elements.saveVoiceBtn.style.display = 'inline-block';
+                        this.elements.deleteRecordingBtn.style.display = 'inline-block';
+                        
+                        // Stop all tracks
+                        stream.getTracks().forEach(track => track.stop());
+                        
+                        this.elements.voiceRecordingStatus.textContent = `Recording complete! Size: ${(blob.size / 1024).toFixed(1)}KB`;
+                        this.log(`Voice recording completed: ${(blob.size / 1024).toFixed(1)}KB`);
+                    };
+                    
+                    // Start recording
+                    this.voiceRecorder.start(100);
+                    this.voiceRecordingStartTime = Date.now();
+                    
+                    // Update UI
+                    this.elements.recordVoiceBtn.classList.add('recording');
+                    this.elements.recordVoiceIcon.textContent = '⏹️';
+                    this.elements.recordVoiceText.textContent = 'Stop Recording';
+                    this.elements.recordingTimer.style.display = 'inline';
+                    this.elements.voiceRecordingStatus.textContent = 'Recording... Speak naturally for 10-15 seconds';
+                    
+                    // Start timer
+                    this.startVoiceRecordingTimer();
+                    
+                    // Auto-stop after 30 seconds
+                    setTimeout(() => {
+                        if (this.voiceRecorder && this.voiceRecorder.state === 'recording') {
+                            this.stopVoiceRecording();
+                            this.elements.voiceRecordingStatus.textContent = 'Maximum recording time reached (30s)';
+                        }
+                    }, 30000);
+                    
+                } catch (error) {
+                    console.error('Voice recording error:', error);
+                    this.elements.voiceRecordingStatus.textContent = `Error: ${error.message}`;
+                    this.showError(`Failed to start recording: ${error.message}`);
+                }
+            }
+            
+            stopVoiceRecording() {
+                if (this.voiceRecorder && this.voiceRecorder.state === 'recording') {
+                    this.voiceRecorder.stop();
+                    
+                    // Clear timer
+                    if (this.voiceRecordingTimer) {
+                        clearInterval(this.voiceRecordingTimer);
+                        this.voiceRecordingTimer = null;
+                    }
+                    
+                    // Update UI
+                    this.elements.recordVoiceBtn.classList.remove('recording');
+                    this.elements.recordVoiceIcon.textContent = '🔴';
+                    this.elements.recordVoiceText.textContent = 'Record Voice';
+                }
+            }
+            
+            startVoiceRecordingTimer() {
+                this.voiceRecordingTimer = setInterval(() => {
+                    const elapsed = Math.floor((Date.now() - this.voiceRecordingStartTime) / 1000);
+                    const minutes = Math.floor(elapsed / 60);
+                    const seconds = elapsed % 60;
+                    this.elements.recordingTimer.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    
+                    // Provide feedback at 10 seconds
+                    if (elapsed === 10) {
+                        this.elements.voiceRecordingStatus.textContent = 'Good! Keep going for best results...';
+                    } else if (elapsed === 15) {
+                        this.elements.voiceRecordingStatus.textContent = 'Perfect! You can stop now or continue...';
+                    }
+                }, 1000);
+            }
+            
+            async playbackRecordedVoice() {
+                if (this.recordedVoiceBlob) {
+                    const audioUrl = URL.createObjectURL(this.recordedVoiceBlob);
+                    const audio = new Audio(audioUrl);
+                    audio.play();
+                    
+                    audio.onended = () => {
+                        URL.revokeObjectURL(audioUrl);
+                    };
+                    
+                    this.elements.voiceRecordingStatus.textContent = 'Playing back your recording...';
+                }
+            }
+            
+            async saveVoiceClone() {
+                if (!this.recordedVoiceBlob) {
+                    this.showError('No recording to save');
+                    return;
+                }
+                
+                const voiceName = this.elements.voiceName.value.trim();
+                if (!voiceName) {
+                    this.showError('Please enter a name for your voice recording');
+                    this.elements.voiceName.focus();
+                    return;
+                }
+                
+                // Sanitize the name for filename
+                const sanitizedName = voiceName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+                
+                try {
+                    this.elements.voiceRecordingStatus.textContent = `Saving voice as "${voiceName}"...`;
+                    
+                    // Create form data with audio and name
+                    const formData = new FormData();
+                    formData.append('audio', this.recordedVoiceBlob);
+                    formData.append('name', sanitizedName);
+                    formData.append('displayName', voiceName);
+                    
+                    const response = await fetch('/api/save-voice-clone', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to save: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    // Add the new voice to the dropdown
+                    const voiceSelect = this.elements.voiceSample;
+                    const customOption = voiceSelect.querySelector('option[value="custom"]');
+                    
+                    // Check if voice already exists
+                    let existingOption = voiceSelect.querySelector(`option[value="${result.filename}"]`);
+                    if (existingOption) {
+                        existingOption.textContent = `${voiceName} (${result.size})`;
+                    } else {
+                        // Create new option
+                        const newOption = document.createElement('option');
+                        newOption.value = result.filename;
+                        newOption.textContent = `${voiceName} (${result.size})`;
+                        voiceSelect.insertBefore(newOption, customOption);
+                    }
+                    
+                    // Select the new voice
+                    voiceSelect.value = result.filename;
+                    
+                    this.elements.voiceRecordingStatus.textContent = `✅ Voice "${voiceName}" saved and selected!`;
+                    this.showSuccess(`Voice "${voiceName}" has been saved and selected for cloning!`);
+                    this.log(`Voice clone saved successfully as ${result.filename}`);
+                    
+                    // Clean up UI
+                    this.elements.saveVoiceBtn.style.display = 'none';
+                    this.elements.playbackVoiceBtn.style.display = 'none';
+                    this.elements.deleteRecordingBtn.style.display = 'none';
+                    this.elements.recordingTimer.style.display = 'none';
+                    this.elements.voiceName.value = '';
+                    this.recordedVoiceBlob = null;
+                    
+                } catch (error) {
+                    console.error('Save voice clone error:', error);
+                    this.elements.voiceRecordingStatus.textContent = `Failed to save: ${error.message}`;
+                    this.showError(`Failed to save voice clone: ${error.message}`);
+                }
+            }
+            
+            deleteRecording() {
+                this.recordedVoiceBlob = null;
+                this.elements.playbackVoiceBtn.style.display = 'none';
+                this.elements.saveVoiceBtn.style.display = 'none';
+                this.elements.deleteRecordingBtn.style.display = 'none';
+                this.elements.recordingTimer.style.display = 'none';
+                this.elements.voiceRecordingStatus.textContent = 'Recording deleted. You can record again.';
+                this.log('Recording deleted');
             }
         }
 
