@@ -54,6 +54,12 @@ services:
       # Engine Selection
       # faster_whisper = 3x+ speedup, openai_whisper = standard implementation
       - ASR_ENGINE=faster_whisper
+      
+      # Audio Processing Configuration (prevent cutoffs during long speech)
+      # Keep model loaded to avoid delays
+      - MODEL_IDLE_TIMEOUT=0
+      # Standard sample rate for voice calls
+      - SAMPLE_RATE=16000
     ports:
       # Speech recognition API endpoint
       - "9000:9000"
@@ -394,7 +400,7 @@ services:
       - LLM_TEMPERATURE=0.7
       - LLM_MAX_TOKENS=100
       - TTS_TIMEOUT_MS=30000
-      - STT_TIMEOUT_MS=8000
+      - STT_TIMEOUT_MS=30000
       
       # Webhook Configuration (update with your Jambonz server URL)
       - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-https://talk3.mvp-scale.com}

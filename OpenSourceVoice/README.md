@@ -46,6 +46,285 @@ graph TB
 
 *67x faster than real-time for TTS generation*
 
+## 📊 System Flow Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    participant User as User/Phone
+    participant SBC as Jambonz SBC
+    participant App as Voice App (Scout)
+    participant STT as Faster-Whisper STT
+    participant LLM as Ollama LLM
+    participant TTS as Chatterbox TTS
+    participant Cache as Audio Cache
+
+    User->>SBC: Incoming Call
+    SBC->>App: POST /webhook/call
+    App->>TTS: Generate Greeting
+    TTS-->>App: Audio ID (3-4s)
+    App->>Cache: Store Audio
+    App-->>SBC: Play greeting + Gather
+    SBC-->>User: "Hi! I'm Scout..."
+    
+    User->>SBC: Speaks Response
+    SBC->>App: POST /webhook/conversation
+    Note over App: Extract speech from request
+    App->>App: Check VAD (750ms silence)
+    
+    App->>LLM: Generate AI Response
+    Note over LLM: Process with Llama 3.1
+    LLM-->>App: Text Response (200-500ms)
+    
+    App->>TTS: Generate Speech
+    Note over TTS: Chatterbox Neural TTS
+    TTS-->>App: Audio File (1-2s)
+    
+    App->>Cache: Store Audio
+    App-->>SBC: Play audio + Gather
+    SBC-->>User: AI Response
+    
+    Note over User,Cache: Loop continues until goodbye
+    
+    User->>SBC: "Goodbye"
+    SBC->>App: Detect goodbye phrase
+    App-->>SBC: Hangup verb
+    SBC-->>User: End Call
+    App->>Cache: Cleanup session
+```
+
+## 🛠️ Command Reference Guide
+
+### Core Management Commands
+
+| Command | Purpose | When to Use |
+|---------|---------|------------|
+| `./setup.sh` | Initial setup and start all services | First time setup or full restart |
+| `./run.sh` | Interactive management menu | Daily operations and troubleshooting |
+| `docker-compose up -d` | Start all services in background | Production deployment |
+| `docker-compose down` | Stop all services gracefully | Maintenance or shutdown |
+| `docker-compose down -v` | Stop and remove all data | Complete reset needed |
+
+### Development & Debugging Commands
+
+| Command | Purpose | Example Output |
+|---------|---------|----------------|
+| `docker-compose logs -f voice-app` | Watch real-time logs | See live call processing |
+| `docker-compose logs -f voice-app --tail=100` | View last 100 log lines | Debug recent issues |
+| `docker-compose ps` | Check service status | Verify all containers running |
+| `docker-compose restart voice-app` | Restart the voice application | Apply code changes |
+| `docker-compose build --no-cache voice-app` | Rebuild app without cache | Force fresh build |
+
+### Service-Specific Commands
+
+#### 🧠 LLM Management (Ollama)
+```bash
+# Pull a new model
+docker exec voice-ai-llm ollama pull llama3.1:8b
+
+# List installed models
+docker exec voice-ai-llm ollama list
+
+# Test LLM directly
+docker exec voice-ai-llm ollama run llama3.1:8b "Hello, how are you?"
+
+# Monitor GPU usage during LLM
+docker exec voice-ai-llm nvidia-smi
+```
+
+#### 🎵 TTS Management (Chatterbox/Coqui)
+```bash
+# Test TTS generation
+curl -X POST http://localhost:5002/api/tts \
+  -d "text=Hello world" \
+  -o test.wav
+
+# Check TTS service health
+curl http://localhost:5002/health
+
+# View TTS logs
+docker-compose logs -f voice-ai-tts
+```
+
+#### 🎤 STT Management (Faster-Whisper)
+```bash
+# Check Whisper service
+curl http://localhost:9000/health
+
+# Monitor transcription performance
+docker-compose logs -f voice-ai-whisper | grep "transcription"
+```
+
+### Monitoring & Performance Commands
+
+| Command | Purpose | Key Metrics |
+|---------|---------|-------------|
+| `curl localhost:3003/metrics` | View performance metrics | Response times, success rates |
+| `curl localhost:3003/health` | Check application health | Service status, active calls |
+| `docker stats` | Monitor resource usage | CPU, Memory, Network I/O |
+| `watch -n 1 nvidia-smi` | Monitor GPU usage | GPU memory, utilization |
+
+### Troubleshooting Commands
+
+#### 🔍 Debugging Connection Issues
+```bash
+# Check if services are listening
+netstat -tulpn | grep -E "3003|5002|9000|11434"
+
+# Test webhook endpoint
+curl -X POST http://localhost:3003/webhook/call \
+  -H "Content-Type: application/json" \
+  -d '{"call_sid":"test-123","from":"1234567890","to":"0987654321"}'
+
+# Check Docker network
+docker network inspect opensourcevoice_voice-ai-network
+
+# Verify service connectivity
+docker exec voice-ai-webhook ping ollama
+```
+
+#### 🔧 Fix Common Issues
+```bash
+# Clear audio cache
+docker exec voice-ai-webhook rm -rf /app/audio-cache/*
+
+# Reset conversation state
+docker-compose restart voice-app
+
+# Force reconnect to services
+docker-compose restart voice-ai-llm voice-ai-tts voice-ai-whisper
+
+# Complete reset (WARNING: Loses all data)
+docker-compose down -v && docker-compose up -d
+```
+
+### Advanced Operations
+
+#### 📦 Backup & Restore
+```bash
+# Backup models and data
+docker run --rm -v opensourcevoice_ollama-data:/data \
+  -v $(pwd)/backup:/backup alpine \
+  tar czf /backup/ollama-backup.tar.gz -C /data .
+
+# Restore from backup
+docker run --rm -v opensourcevoice_ollama-data:/data \
+  -v $(pwd)/backup:/backup alpine \
+  tar xzf /backup/ollama-backup.tar.gz -C /data
+```
+
+#### 🔄 Update Services
+```bash
+# Update voice app code
+git pull
+docker-compose build --no-cache voice-app
+docker-compose up -d voice-app
+
+# Update Ollama models
+docker exec voice-ai-llm ollama pull llama3.1:latest
+
+# Update all services
+docker-compose pull
+docker-compose up -d
+```
+
+#### 📈 Performance Tuning
+```bash
+# Adjust LLM temperature (in .env)
+echo "LLM_TEMPERATURE=0.7" >> .env
+
+# Change TTS provider
+echo "TTS_PROVIDER=coqui" >> .env
+
+# Increase timeouts for slow networks
+echo "LLM_TIMEOUT_MS=30000" >> .env
+echo "TTS_TIMEOUT_MS=40000" >> .env
+
+# Apply changes
+docker-compose up -d
+```
+
+### Testing Commands
+
+#### 📞 Test Call Flow
+```bash
+# Simulate incoming call
+npm run test:inbound
+
+# Test outbound calling
+npm run test:outbound -- --to +15087374849
+
+# Load testing (10 concurrent calls)
+npm run test:load -- --concurrent 10 --duration 60
+
+# Test specific scenario
+npm run test:scenario -- --scenario account-verification
+```
+
+#### 🎯 Test Individual Components
+```bash
+# Test only TTS
+curl -X POST http://localhost:3003/test/tts \
+  -H "Content-Type: application/json" \
+  -d '{"text":"Testing text to speech"}'
+
+# Test only LLM
+curl -X POST http://localhost:3003/test/llm \
+  -H "Content-Type: application/json" \
+  -d '{"prompt":"What is the weather like?"}'
+
+# Test VAD settings
+curl -X POST http://localhost:3003/test/vad \
+  -H "Content-Type: application/json" \
+  -d '{"audio":"base64_encoded_audio"}'
+```
+
+### Production Commands
+
+#### 🚀 Deployment
+```bash
+# Production start with logging
+docker-compose up -d && docker-compose logs -f
+
+# Health check loop
+while true; do \
+  curl -s http://localhost:3003/health | jq .; \
+  sleep 30; \
+done
+
+# Auto-restart on failure
+docker-compose up -d --restart unless-stopped
+```
+
+#### 📊 Monitoring
+```bash
+# Export metrics to Prometheus
+curl http://localhost:3003/metrics | \
+  curl -X POST http://prometheus:9091/metrics/job/voice-app --data-binary @-
+
+# Generate daily report
+docker-compose logs --since 24h voice-app | \
+  grep "Call completed" | wc -l > daily-calls.txt
+```
+
+## 🔍 Understanding the Commands
+
+### Docker Compose Lifecycle
+1. **`up`** - Creates and starts containers
+2. **`down`** - Stops and removes containers
+3. **`restart`** - Stops and starts containers
+4. **`build`** - Builds or rebuilds services
+5. **`logs`** - Shows container logs
+6. **`ps`** - Lists running containers
+7. **`exec`** - Runs commands in containers
+
+### Key Flags Explained
+- **`-d`** - Detached mode (background)
+- **`-f`** - Follow logs in real-time
+- **`--tail`** - Number of lines to show
+- **`--no-cache`** - Ignore build cache
+- **`-v`** - Remove volumes when stopping
+- **`--since`** - Show logs since timestamp
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -176,6 +455,320 @@ Configure your Jambonz application to point to this webhook server:
 2. **User Speech** → Captured and sent to `/webhook/conversation` 
 3. **AI Processing** → Speech → Ollama LLM → Coqui TTS → Audio response
 4. **Audio Playback** → Generated audio file served via `verb: "play"`
+
+### 🎯 Jambonz Action Verbs Reference
+
+Jambonz Action Verbs are the fundamental building blocks that control call flow and interactions. Your webhook server returns JSON responses containing these verbs to instruct Jambonz on what actions to perform.
+
+#### Core Media Verbs
+
+| Verb | Purpose | When to Use | Example |
+|------|---------|-------------|---------|
+| **`play`** | Stream audio files (MP3/WAV) | Pre-recorded messages, generated TTS files | Greeting playback |
+| **`say`** | Convert text to speech in real-time | Dynamic content, simple responses | Quick confirmations |
+| **`gather`** | Collect user input (speech/DTMF) | Interactive menus, data collection | Phone number capture |
+| **`pause`** | Insert silence/delay | Prevent audio clipping, natural pauses | Post-answer delay |
+
+#### Key Differences: `play` vs `say`
+
+**Use `play` for:**
+- Generated TTS audio files (like our Chatterbox/Coqui output)
+- Pre-recorded audio messages
+- Complex audio that needs caching
+- Production-quality voice synthesis
+
+```json
+{
+  "verb": "play",
+  "url": "https://your-domain.com/audio/generated/greeting-123.wav",
+  "actionHook": "/after-greeting"
+}
+```
+
+**Use `say` for:**
+- Simple, dynamic text responses
+- Quick confirmations or short messages
+- When immediate response is more important than audio quality
+- Testing and development
+
+```json
+{
+  "verb": "say",
+  "text": "Thank you. Please hold while I process your request.",
+  "synthesizer": {
+    "vendor": "default",
+    "voice": "default"
+  }
+}
+```
+
+#### Input Collection Verbs
+
+| Verb | Purpose | Input Types | Use Case |
+|------|---------|-------------|----------|
+| **`gather`** | Collect speech or DTMF | `["speech"]`, `["dtmf"]`, `["speech", "dtmf"]` | Menu navigation, data entry |
+| **`dtmf`** | Collect only DTMF tones | Keypad only | PIN entry, menu selection |
+
+**Gather Example (Our Voice AI Use Case):**
+```json
+{
+  "verb": "gather",
+  "actionHook": "/webhook/conversation",
+  "input": ["speech"],
+  "timeout": 15,
+  "recognizer": {
+    "vendor": "default",
+    "language": "en-US"
+  },
+  "say": {
+    "text": "How can I help you today?"
+  }
+}
+```
+
+**VAD (Voice Activity Detection) Settings:**
+```json
+{
+  "verb": "gather",
+  "input": ["speech"],
+  "recognizer": {
+    "vendor": "default", 
+    "language": "en-US",
+    "voiceMs": 750  // Wait 750ms of silence before processing
+  }
+}
+```
+
+#### Call Control Verbs
+
+| Verb | Purpose | When to Use | Result |
+|------|---------|-------------|---------|
+| **`answer`** | Answer incoming call | Prevent audio clipping | Establishes media path |
+| **`hangup`** | End the call | Conversation complete | Call termination |
+| **`redirect`** | Transfer to different webhook | Change conversation flow | New application control |
+
+**Answer + Pause Pattern (Recommended):**
+```json
+[
+  {
+    "verb": "answer"
+  },
+  {
+    "verb": "pause",
+    "length": 1.0
+  },
+  {
+    "verb": "play",
+    "url": "https://your-domain.com/audio/greeting.wav"
+  }
+]
+```
+
+#### Advanced Verbs
+
+| Verb | Purpose | Use Case | Example |
+|------|---------|----------|---------|
+| **`config`** | Modify session settings | Change TTS voice, language | Voice switching |
+| **`dial`** | Make outbound calls | Transfer, conference | Call forwarding |
+| **`conference`** | Multi-party calls | Group conversations | Conference bridge |
+| **`tag`** | Add metadata | Call tracking, analytics | Customer data |
+
+**Config Example (Voice Switching):**
+```json
+{
+  "verb": "config",
+  "synthesizer": {
+    "vendor": "coqui",
+    "voice": "p226"  // Male voice
+  }
+}
+```
+
+#### Response Structure Patterns
+
+**Single Action Response:**
+```json
+{
+  "verb": "say",
+  "text": "Hello, welcome to our service!"
+}
+```
+
+**Sequential Actions (Array):**
+```json
+[
+  {
+    "verb": "pause",
+    "length": 1.5
+  },
+  {
+    "verb": "play", 
+    "url": "/audio/greeting.wav"
+  },
+  {
+    "verb": "gather",
+    "actionHook": "/process-input",
+    "input": ["speech"],
+    "timeout": 10
+  }
+]
+```
+
+**Nested Actions (Gather with Prompt):**
+```json
+{
+  "verb": "gather",
+  "actionHook": "/collect-info",
+  "input": ["speech", "dtmf"],
+  "timeout": 15,
+  "say": {
+    "text": "Please say or press your account number"
+  }
+}
+```
+
+#### Error Handling & Timeouts
+
+**Action Hook Delays (User Waiting):**
+```json
+{
+  "verb": "gather",
+  "actionHook": "/process-speech",
+  "actionHookDelayAction": {
+    "enabled": true,
+    "noResponseTimeout": 2,
+    "actions": [
+      {
+        "verb": "say",
+        "text": "Please hold while I process that..."
+      }
+    ]
+  }
+}
+```
+
+**Timeout Handling:**
+```json
+{
+  "verb": "gather",
+  "input": ["speech"],
+  "timeout": 10,
+  "say": {
+    "text": "I didn't hear anything. Please try again."
+  },
+  "actionHook": "/handle-timeout"
+}
+```
+
+#### Our Voice AI Implementation
+
+**Initial Call Response (voice-app.js):**
+```javascript
+// Generate greeting with Chatterbox TTS
+const audioId = await generateChatterboxTTS(greetingText, callSid);
+const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
+
+return res.json([
+  {
+    verb: "play",
+    url: audioUrl,
+    actionHook: `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`
+  },
+  {
+    verb: "gather",
+    actionHook: `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+    input: ["speech"],
+    timeout: 15,
+    recognizer: {
+      vendor: "default",
+      language: "en-US",
+      voiceMs: 750  // Standardized VAD setting
+    }
+  }
+]);
+```
+
+**Conversation Response Pattern:**
+```javascript
+// After AI processing
+return res.json([
+  {
+    verb: "play",
+    url: generatedAudioUrl
+  },
+  {
+    verb: "gather", 
+    actionHook: `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+    input: ["speech"],
+    timeout: 15,
+    recognizer: {
+      vendor: "default",
+      language: "en-US", 
+      voiceMs: 750
+    }
+  }
+]);
+```
+
+#### Common Patterns
+
+**1. Greeting with Input Collection:**
+```json
+[
+  {"verb": "answer"},
+  {"verb": "pause", "length": 1},
+  {
+    "verb": "gather",
+    "say": {"text": "Hi! I'm Scout. How can I help you today?"},
+    "input": ["speech"],
+    "actionHook": "/process-request"
+  }
+]
+```
+
+**2. Confirmation Pattern:**
+```json
+{
+  "verb": "gather",
+  "say": {"text": "I heard you say 555-1234. Is that correct? Say yes or no."},
+  "input": ["speech"],
+  "actionHook": "/confirm-number"
+}
+```
+
+**3. Error Recovery:**
+```json
+{
+  "verb": "gather", 
+  "say": {"text": "I'm sorry, I didn't understand. Could you please repeat that?"},
+  "input": ["speech"],
+  "timeout": 10,
+  "actionHook": "/retry-input"
+}
+```
+
+**4. Call Termination:**
+```json
+[
+  {
+    "verb": "say",
+    "text": "Thank you for calling. Have a great day!"
+  },
+  {
+    "verb": "hangup"
+  }
+]
+```
+
+#### Best Practices
+
+1. **Always use `play` for generated TTS files** - Better quality and caching
+2. **Standardize VAD settings** - Use `voiceMs: 750` for phone number capture  
+3. **Include actionHooks** - Handle completion and errors
+4. **Use pauses after answer** - Prevent audio clipping (1-1.5 seconds)
+5. **Set appropriate timeouts** - Balance user experience vs system load
+6. **Handle empty responses** - Provide fallback messages
+7. **Chain actions logically** - Each response should lead to next step
 
 ## 🔍 Monitoring & Debugging
 

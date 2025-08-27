@@ -15,6 +15,55 @@ const conversations = new Map();
 // Store call start times for conversation management
 const callStartTimes = new Map();
 
+// Helper function to log Jambonz action verbs with clear flow indication
+function logJambonzAction(callSid, actor, verbs, context = '') {
+  const verbActions = Array.isArray(verbs) ? verbs : [verbs];
+  
+  verbActions.forEach((verb, index) => {
+    const action = verb.verb?.toUpperCase() || 'UNKNOWN';
+    const details = [];
+    
+    // Add relevant details based on verb type
+    switch (verb.verb) {
+      case 'play':
+        details.push(`url: ${verb.url?.split('/').pop() || 'unknown'}`);
+        break;
+      case 'say':
+        const text = verb.text || '';
+        details.push(`text: "${text.length > 50 ? text.substring(0, 50) + '...' : text}"`);
+        break;
+      case 'gather':
+        details.push(`input: [${verb.input?.join(',') || 'unknown'}]`);
+        if (verb.recognizer?.voiceMs) details.push(`vad: ${verb.recognizer.voiceMs}ms`);
+        if (verb.timeout) details.push(`jambonz_timeout: ${verb.timeout}s`);
+        break;
+      case 'hangup':
+        details.push('call termination');
+        break;
+      case 'pause':
+        details.push(`duration: ${verb.length || 'default'}s`);
+        break;
+    }
+    
+    const detailStr = details.length > 0 ? ` (${details.join(', ')})` : '';
+    const contextStr = context ? ` ${context}` : '';
+    
+    logger.info(`[${actor}] [ACTION:${action}]${detailStr}${contextStr}`, { callSid });
+  });
+}
+
+// Helper function to log user input and system responses clearly
+function logUserInput(callSid, speech, confidence = null, context = '') {
+  const confidenceStr = confidence !== null ? ` (confidence: ${confidence})` : '';
+  const contextStr = context ? ` ${context}` : '';
+  logger.info(`[USER] [INPUT:SPEECH] "${speech}"${confidenceStr}${contextStr}`, { callSid });
+}
+
+function logSystemResponse(callSid, text, context = '') {
+  const contextStr = context ? ` ${context}` : '';
+  logger.info(`[AGENT] [OUTPUT:TEXT] "${text.length > 100 ? text.substring(0, 100) + '...' : text}"${contextStr}`, { callSid });
+}
+
 // Store generated audio files
 const audioCache = new Map();
 
@@ -45,9 +94,13 @@ let testMode = {
   alternatePerCall: false
 };
 
+// Jambonz timeout configuration - keep session alive while Whisper VAD controls speech timing
+const JAMBONZ_GATHER_TIMEOUT = parseInt(process.env.JAMBONZ_GATHER_TIMEOUT_S) || 45;
+
 logger.info(`🤖 AI Provider: ${aiProvider.toUpperCase()}`);
 logger.info(`📝 TTS Provider: ${process.env.TTS_PROVIDER || 'chatterbox'}`);
 logger.info(`🔄 Test Mode: ${testMode.currentMethod}`);
+logger.info(`⏱️ Jambonz Gather Timeout: ${JAMBONZ_GATHER_TIMEOUT}s (Whisper VAD: 5000ms - TEST MODE)`);
 
 // 100% Free Open-Source GPU Services
 const GPU_SERVICES = {
@@ -240,7 +293,7 @@ async function generateOllamaResponse(messages) {
         num_thread: 8   // Use more threads
       }
     }, {
-      timeout: parseInt(process.env.LLM_TIMEOUT_MS) || 5000
+      timeout: parseInt(process.env.LLM_TIMEOUT_MS) || 20000
     });
     
     const aiResponse = response.data.message.content;
@@ -327,7 +380,7 @@ async function transcribeFasterWhisper(audioBuffer) {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 8000 // Faster-whisper is much quicker than OpenAI
+      timeout: parseInt(process.env.STT_TIMEOUT_MS) || 30000 // Allow longer transcription for extended speech
     });
     
     const transcript = response.data.text;
@@ -452,48 +505,27 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
   
   // Generate greeting audio using our configured TTS
   const greetingText = "Hi! I'm Scout, an AI assistant demonstrating customer service capabilities. This is a simulation only. I can show you account verification, order status checks, or scheduling. What would you like to try?";
-  let greetingUrl;
   
+  // Generate the greeting audio and wait for it (we need to play something)
+  let audioUrl = null;
   try {
     const audioId = await generateChatterboxTTS(greetingText, callSid);
-    greetingUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
+    audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
+    logger.info('Greeting audio generated successfully', { audioId, callSid, audioUrl });
   } catch (error) {
     logger.error('Failed to generate greeting audio', { callSid, error: error.message });
-    // Fallback to simple say verb if TTS fails
-    const response = [
-      {
-        "verb": "say",
-        "text": greetingText,
-        "synthesizer": { "vendor": "default" }
-      },
-      {
-        "verb": "gather",
-        "input": ["speech"],
-        "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
-        "recognizer": {
-          "vendor": "openai",
-          "model": "whisper-1",
-          "language": "en",
-          "vad": {
-            "enable": true,
-            "mode": 1,
-            "voiceMs": 750
-          }
-        }
-      }
-    ];
-    logger.response(200, callSid, response);
-    return res.json(response);
   }
   
-  const response = [
+  // Build response - use audio if available, otherwise fall back to say verb
+  const response = audioUrl ? [
     {
       "verb": "play",
-      "url": greetingUrl
+      "url": audioUrl
     },
     {
       "verb": "gather",
       "input": ["speech"],
+      "timeout": JAMBONZ_GATHER_TIMEOUT,
       "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
       "recognizer": {
         "vendor": "openai",
@@ -502,11 +534,40 @@ Remember: You're demonstrating SMS-based two-factor authentication for customer 
         "vad": {
           "enable": true,
           "mode": 1,
-          "voiceMs": 500
+          "voiceMs": 5000
+        }
+      }
+    }
+  ] : [
+    {
+      "verb": "say",
+      "text": greetingText,
+      "synthesizer": { 
+        "vendor": "aws",
+        "voice": "Joanna"
+      }
+    },
+    {
+      "verb": "gather",
+      "input": ["speech"],
+      "timeout": JAMBONZ_GATHER_TIMEOUT,
+      "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+      "recognizer": {
+        "vendor": "openai",
+        "model": "whisper-1",
+        "language": "en",
+        "vad": {
+          "enable": true,
+          "mode": 1,
+          "voiceMs": 5000
         }
       }
     }
   ];
+  
+  // Log the greeting and actions being sent to Jambonz
+  logSystemResponse(callSid, greetingText, '- INITIAL GREETING');
+  logJambonzAction(callSid, 'AGENT', response, '- GREETING FLOW');
   
   logger.response(200, callSid, response);
   res.json(response);
@@ -531,14 +592,19 @@ app.post('/webhook/conversation', async (req, res) => {
       userMessage = req.body.speech.alternatives[0].transcript;
       const sttDuration = Date.now() - requestStartTime;
       logger.performance('Speech-to-Text', sttDuration, { callSid });
+      
+      // Enhanced user input logging
+      const confidence = req.body.speech.alternatives[0].confidence;
+      logUserInput(callSid, userMessage, confidence, '- SPEECH RECOGNIZED');
+      
       logger.conversation(callSid, 'USER', userMessage, { 
-        confidence: req.body.speech.alternatives[0].confidence 
+        confidence: confidence 
       });
     }
     
     // Handle timeout or no speech
     if (!userMessage || req.body.reason === 'timeout') {
-      logger.warn('No speech detected or timeout', { callSid, reason: req.body.reason });
+      logger.warn('[USER] [INPUT:TIMEOUT] No speech detected or timeout', { callSid, reason: req.body.reason });
       const response = [
         {
           "verb": "say",
@@ -550,6 +616,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
+          "timeout": Math.min(JAMBONZ_GATHER_TIMEOUT, 30),
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "recognizer": {
             "vendor": "openai",
@@ -558,19 +625,54 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 500
+              "voiceMs": 5000
             }
           }
         }
       ];
+      
+      // Log timeout response
+      logSystemResponse(callSid, "I didn't catch that. Could you please repeat what you'd like to test?", '- TIMEOUT RECOVERY');
+      logJambonzAction(callSid, 'AGENT', response, '- RETRY FLOW');
+      
       return res.json(response);
     }
     
-    // Check for goodbye phrases (EXACT MIRROR)
-    const goodbyePhrases = ['goodbye', 'bye', 'see you', 'talk to you later', 'gotta go', 'have to go', 'end call', 'hang up'];
-    const isGoodbye = goodbyePhrases.some(phrase => userMessage.toLowerCase().includes(phrase));
+    // Check for clear goodbye phrases only - no single word "bye" to avoid false positives
+    const userMessageLower = userMessage.toLowerCase().trim();
     
-    if (isGoodbye) {
+    // Only explicit goodbye phrases (no ambiguous single words)
+    const explicitGoodbyes = ['goodbye', 'good bye', 'bye bye', 'see you later', 'talk to you later', 
+                             'gotta go', 'have to go', 'need to go', 'end call', 'hang up', 'end the call'];
+    
+    // Check for confirmation responses to "anything else" question (be very specific to avoid false positives)
+    const confirmationResponses = [
+      'no thanks', 'no thank you', 'that\'s all', 'that\'s it', 
+      'nothing else', 'no more questions', 'we\'re all done', 'all done',
+      'end the call', 'end call', 'hang up the call'
+    ];
+    
+    // Handle standalone "no" only if it's very short and clear
+    const isStandaloneNo = (userMessageLower === 'no' || userMessageLower === 'no.' || 
+                           userMessageLower === 'nope' || userMessageLower === 'nope.');
+    
+    const isExplicitGoodbye = explicitGoodbyes.some(phrase => userMessageLower.includes(phrase));
+    const isConfirmingEnd = confirmationResponses.some(phrase => userMessageLower.includes(phrase)) || isStandaloneNo;
+    
+    // Enhanced logging for goodbye detection debugging  
+    if (isExplicitGoodbye) {
+      logger.info(`[SYSTEM] [EXPLICIT_GOODBYE] "${userMessage}" - ending call immediately`, { callSid });
+    }
+    if (isConfirmingEnd) {
+      if (isStandaloneNo) {
+        logger.info(`[SYSTEM] [CONFIRMED_END_STANDALONE_NO] "${userMessage}" - standalone no detected`, { callSid });
+      } else {
+        const matchedPhrase = confirmationResponses.find(phrase => userMessageLower.includes(phrase));
+        logger.info(`[SYSTEM] [CONFIRMED_END_PHRASE] "${userMessage}" - matched phrase: "${matchedPhrase}"`, { callSid });
+      }
+    }
+    
+    if (isExplicitGoodbye || isConfirmingEnd) {
       const response = [
         {
           "verb": "say",
@@ -587,6 +689,11 @@ app.post('/webhook/conversation', async (req, res) => {
       // Clean up conversation history
       conversations.delete(callSid);
       callStartTimes.delete(callSid);
+      
+      // Log goodbye response
+      logSystemResponse(callSid, "Thanks for testing the GPU voice processing! The performance data has been recorded. Goodbye!", '- GOODBYE');
+      logJambonzAction(callSid, 'AGENT', response, '- CALL TERMINATION');
+      
       return res.json(response);
     }
     
@@ -603,6 +710,54 @@ app.post('/webhook/conversation', async (req, res) => {
       role: "user",
       content: userMessage
     });
+    
+    // Check for conversation completion indicators (user seems done)
+    const completionIndicators = [
+      'thank you', 'thanks', 'that\'s all', 'that\'s it', 'i\'m done', 'we\'re done', 
+      'all set', 'perfect', 'great thanks', 'sounds good', 'got it thanks',
+      'that helps', 'that\'s helpful', 'appreciate it'
+    ];
+    
+    const seemsComplete = completionIndicators.some(indicator => 
+      userMessageLower.includes(indicator)
+    );
+    
+    // If conversation seems complete, ask for confirmation instead of ending
+    if (seemsComplete) {
+      logger.info(`[SYSTEM] [COMPLETION_DETECTED] "${userMessage}" - asking for confirmation`, { callSid });
+      
+      const confirmationResponse = [
+        {
+          "verb": "say",
+          "text": "It sounds like we've covered what you needed. Is there anything else I can help you with, or would you like to end the call?",
+          "synthesizer": {
+            "vendor": "default"
+          }
+        },
+        {
+          "verb": "gather",
+          "input": ["speech"],
+          "timeout": JAMBONZ_GATHER_TIMEOUT,
+          "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+          "recognizer": {
+            "vendor": "openai",
+            "model": "whisper-1",
+            "language": "en",
+            "vad": {
+              "enable": true,
+              "mode": 1,
+              "voiceMs": 5000
+            }
+          }
+        }
+      ];
+      
+      // Log confirmation response
+      logSystemResponse(callSid, "It sounds like we've covered what you needed. Is there anything else I can help you with, or would you like to end the call?", '- COMPLETION CONFIRMATION');
+      logJambonzAction(callSid, 'AGENT', confirmationResponse, '- ASKING FOR CONFIRMATION');
+      
+      return res.json(confirmationResponse);
+    }
     
     // Check if conversation has exceeded 60 seconds (only add wrap-up message once)
     const callStartTime = callStartTimes.get(callSid);
@@ -669,6 +824,8 @@ app.post('/webhook/conversation', async (req, res) => {
       aiResponse = "Could you repeat that please? Let me make sure I have your information correct.";
     }
     
+    // Enhanced AI response logging
+    logSystemResponse(callSid, aiResponse, '- AI GENERATED');
     logger.conversation(callSid, 'AI', aiResponse);
     
     // Add AI response to history
@@ -680,11 +837,24 @@ app.post('/webhook/conversation', async (req, res) => {
     // Update stored conversation
     conversations.set(callSid, conversationHistory);
     
-    // Generate audio using selected method
+    // Generate audio using selected method with timeout protection
     let response;
     const audioStartTime = Date.now();
     
-    try {
+    // Create a timeout promise that returns a fallback response after 3.5 seconds
+    const timeoutPromise = new Promise((resolve) => {
+      setTimeout(() => {
+        logger.warn('[SYSTEM] [TIMEOUT] Response generation timeout - using fallback', { callSid });
+        resolve({
+          audioId: null,
+          audioGenerationTime: 3500,
+          timedOut: true
+        });
+      }, 3500); // 3.5 seconds to stay under Jambonz timeout
+    });
+    
+    // Create the actual generation promise
+    const generationPromise = (async () => {
       let audioId;
       let audioGenerationTime;
       
@@ -738,9 +908,44 @@ app.post('/webhook/conversation', async (req, res) => {
         }
       }
       
-      const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${audioId}`;
-      
-      response = [
+      return { audioId, audioGenerationTime };
+    })();
+    
+    // Race between generation and timeout
+    const result = await Promise.race([generationPromise, timeoutPromise]);
+    
+    try {
+      if (result.timedOut || !result.audioId) {
+        // Use fallback say verb if generation timed out
+        response = [
+          {
+            "verb": "say",
+            "text": aiResponse,
+            "synthesizer": {
+              "vendor": "default"
+            }
+          },
+          {
+            "verb": "gather",
+            "input": ["speech"],
+            "timeout": JAMBONZ_GATHER_TIMEOUT,
+            "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
+            "recognizer": {
+              "vendor": "openai",
+              "model": "whisper-1",
+              "language": "en",
+              "vad": {
+                "enable": true,
+                "mode": 1,
+                "voiceMs": 5000
+              }
+            }
+          }
+        ];
+      } else {
+        const audioUrl = `${process.env.WEBHOOK_BASE_URL}/audio/generated/${result.audioId}`;
+        
+        response = [
         {
           "verb": "play",
           "url": audioUrl
@@ -748,6 +953,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
+          "timeout": JAMBONZ_GATHER_TIMEOUT,
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "recognizer": {
             "vendor": "openai",
@@ -756,13 +962,16 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 500
+              "voiceMs": 5000
             }
           }
         }
       ];
+      }
       
-      recordResponseTime(callSid, requestStartTime, audioGenerationTime, aiResponse);
+      if (result.audioGenerationTime) {
+        recordResponseTime(callSid, requestStartTime, result.audioGenerationTime, aiResponse);
+      }
       
     } catch (error) {
       console.error('All audio generation methods failed:', error);
@@ -778,6 +987,7 @@ app.post('/webhook/conversation', async (req, res) => {
         {
           "verb": "gather",
           "input": ["speech"],
+          "timeout": JAMBONZ_GATHER_TIMEOUT,
           "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
           "recognizer": {
             "vendor": "openai",
@@ -786,7 +996,7 @@ app.post('/webhook/conversation', async (req, res) => {
             "vad": {
               "enable": true,
               "mode": 1,
-              "voiceMs": 500
+              "voiceMs": 5000
             }
           }
         }
@@ -795,6 +1005,12 @@ app.post('/webhook/conversation', async (req, res) => {
     
     const totalDuration = Date.now() - requestStartTime;
     logger.performance('Total Request', totalDuration, { callSid });
+    
+    // Log the action verbs being sent to Jambonz
+    const isPlayResponse = response.some(verb => verb.verb === 'play');
+    const context = isPlayResponse ? '- AUDIO PLAYBACK' : '- FALLBACK TTS';
+    logJambonzAction(callSid, 'AGENT', response, context);
+    
     logger.response(200, callSid, response);
     res.json(response);
     
@@ -812,6 +1028,7 @@ app.post('/webhook/conversation', async (req, res) => {
       {
         "verb": "gather",
         "input": ["speech"],
+        "timeout": JAMBONZ_GATHER_TIMEOUT,
         "actionHook": `${process.env.WEBHOOK_BASE_URL}/webhook/conversation`,
         "recognizer": {
           "vendor": "openai",
@@ -820,11 +1037,15 @@ app.post('/webhook/conversation', async (req, res) => {
           "vad": {
             "enable": true,
             "mode": 1,
-            "voiceMs": 750
+            "voiceMs": 5000
           }
         }
       }
     ];
+    
+    // Log error response
+    logSystemResponse(callSid, "I'm having a technical issue. Let me try again.", '- ERROR RECOVERY');
+    logJambonzAction(callSid, 'AGENT', errorResponse, '- ERROR HANDLING');
     
     res.json(errorResponse);
   }
