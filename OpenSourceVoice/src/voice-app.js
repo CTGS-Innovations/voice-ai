@@ -101,7 +101,7 @@ logger.info(`🤖 AI Provider: ${aiProvider.toUpperCase()}`);
 logger.info(`📝 TTS Provider: ${process.env.TTS_PROVIDER || 'chatterbox'}`);
 logger.info(`🔄 Test Mode: ${testMode.currentMethod}`);
 logger.info(`⏱️ Aligned Timeouts: ${JAMBONZ_GATHER_TIMEOUT}s (Jambonz Record = STT = Response Generation | 60s max recording)`);
-logger.info(`🔧 PROCESSING CHAIN: Jambonz[Gather] → OpenAI[Whisper-NO-VAD] → Local[${aiProvider.toUpperCase()}] → Local[${process.env.TTS_PROVIDER || 'chatterbox'}] (VAD DISABLED - TIMEOUT ONLY)`);
+logger.info(`🔧 PROCESSING CHAIN: Jambonz[Gather] → Faster-Whisper[VAD-ENABLED] → Local[${aiProvider.toUpperCase()}] → Local[${process.env.TTS_PROVIDER || 'chatterbox'}]`);
 
 // 100% Free Open-Source GPU Services
 const GPU_SERVICES = {
@@ -366,9 +366,10 @@ async function generateElevenLabsAudio(text, callSid) {
 // GPU-Powered Speech Recognition using faster-whisper (FREE)
 async function transcribeFasterWhisper(audioBuffer) {
   const transcribeStartTime = Date.now();
-  logger.info('🎤 [LOCAL-FASTER-WHISPER] Starting transcription', { 
+  logger.info('🎤 [LOCAL-FASTER-WHISPER] Starting transcription with VAD', { 
     service: 'Faster-Whisper Local GPU', 
-    audioSize: `${(audioBuffer.byteLength / 1024).toFixed(1)}KB` 
+    audioSize: `${(audioBuffer.byteLength / 1024).toFixed(1)}KB`,
+    vad: 'enabled'
   });
   
   try {
@@ -380,6 +381,21 @@ async function transcribeFasterWhisper(audioBuffer) {
     formData.append('best_of', '5');
     formData.append('beam_size', '5');
     
+    // Enable VAD filtering for better speech detection
+    formData.append('vad_filter', 'true');
+    
+    // VAD parameters for optimal phone conversation processing
+    const vadParams = {
+      min_silence_duration_ms: parseInt(process.env.VAD_MIN_SILENCE_MS || '500'),  // Min silence to split segments
+      speech_pad_ms: parseInt(process.env.VAD_SPEECH_PAD_MS || '400'),            // Padding around speech
+      threshold: parseFloat(process.env.VAD_THRESHOLD || '0.5'),                  // Speech detection threshold
+      min_speech_duration_ms: parseInt(process.env.VAD_MIN_SPEECH_MS || '250'),   // Min speech duration to keep
+      max_speech_duration_s: parseInt(process.env.VAD_MAX_SPEECH_S || '30')       // Max continuous speech duration
+    };
+    formData.append('vad_parameters', JSON.stringify(vadParams));
+    
+    logger.debug('VAD Parameters:', vadParams);
+    
     const response = await axios.post(`${GPU_SERVICES.FASTER_WHISPER_URL}/asr`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -388,11 +404,14 @@ async function transcribeFasterWhisper(audioBuffer) {
     });
     
     const transcript = response.data.text;
+    const segments = response.data.segments;
     const duration = Date.now() - transcribeStartTime;
-    logger.info('✅ [LOCAL-FASTER-WHISPER] Transcription completed', { 
+    logger.info('✅ [LOCAL-FASTER-WHISPER] Transcription completed with VAD', { 
       service: 'Faster-Whisper Local GPU',
       duration: `${duration}ms`,
       transcript: transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''),
+      segments: segments ? segments.length : 0,
+      vad: 'active',
       success: true
     });
     logger.performance('Speech Recognition', duration);
