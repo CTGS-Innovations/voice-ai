@@ -403,13 +403,20 @@ async function transcribeFasterWhisper(audioBuffer) {
       timeout: (JAMBONZ_GATHER_TIMEOUT * 1000) // Align STT timeout with Jambonz gather timeout
     });
     
-    const transcript = response.data.text;
+    // Log raw response for debugging
+    logger.debug('Whisper raw response:', { 
+      status: response.status,
+      dataType: typeof response.data,
+      dataKeys: response.data ? Object.keys(response.data) : []
+    });
+    
+    const transcript = response.data.text || response.data || '';
     const segments = response.data.segments;
     const duration = Date.now() - transcribeStartTime;
     logger.info('✅ [LOCAL-FASTER-WHISPER] Transcription completed with VAD', { 
       service: 'Faster-Whisper Local GPU',
       duration: `${duration}ms`,
-      transcript: transcript.substring(0, 100) + (transcript.length > 100 ? '...' : ''),
+      transcript: transcript ? (transcript.substring(0, 100) + (transcript.length > 100 ? '...' : '')) : '[Empty]',
       segments: segments ? segments.length : 0,
       vad: 'active',
       success: true
@@ -1204,6 +1211,49 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Whisper VAD Test Dashboard
+app.get('/vad-test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'whisper-vad-test.html'));
+});
+
+// Middleware to handle raw body for audio upload
+app.use('/api/whisper-test', express.raw({ type: 'application/octet-stream', limit: '10mb' }));
+
+// API endpoint for direct Whisper testing
+app.post('/api/whisper-test', async (req, res) => {
+  try {
+    const audioBuffer = req.body;
+    
+    if (!audioBuffer || audioBuffer.length === 0) {
+      throw new Error('No audio data received');
+    }
+    
+    logger.info('🧪 [VAD-TEST] Processing test audio', {
+      size: `${(audioBuffer.length / 1024).toFixed(1)}KB`,
+      type: typeof audioBuffer
+    });
+    
+    const startTime = Date.now();
+    const transcript = await transcribeFasterWhisper(audioBuffer);
+    const processingTime = Date.now() - startTime;
+    
+    res.json({
+      success: true,
+      text: transcript,
+      processingTime,
+      vadEnabled: true,
+      service: 'faster-whisper',
+      segments: [] // TODO: Parse segments from response
+    });
+  } catch (error) {
+    logger.error('❌ [VAD-TEST] Test transcription failed', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
 // Root endpoint (EXACT MIRROR)
 app.get('/', (req, res) => {
   res.json({ 
@@ -1219,7 +1269,9 @@ app.get('/', (req, res) => {
       'GET /metrics - Performance comparison',
       'POST /test-mode - Configure testing (body: {enabled, method, alternatePerCall})',
       'GET /audio/:filename - Serve audio files',
-      'GET /audio/generated/:filename - Serve generated audio'
+      'GET /audio/generated/:filename - Serve generated audio',
+      'GET /vad-test - Whisper VAD Testing Dashboard',
+      'POST /api/whisper-test - Direct Whisper API testing'
     ]
   });
 });
