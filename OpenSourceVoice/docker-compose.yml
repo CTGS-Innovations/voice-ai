@@ -234,8 +234,8 @@ services:
       dockerfile: Dockerfile
     container_name: voice-ai-chatterbox-custom
     restart: unless-stopped
-    # Uncomment to enable this service
-    profiles: ["chatterbox-custom"]
+    # Service now starts by default with docker-compose up
+    # profiles: ["chatterbox-custom"]
     deploy:
       resources:
         reservations:

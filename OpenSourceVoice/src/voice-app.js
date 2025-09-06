@@ -9,6 +9,9 @@ const logger = require('./lib/logger');
 const app = express();
 app.use(express.json());
 
+// Serve static HTML files for testing interfaces
+app.use(express.static(path.join(__dirname)));
+
 // Store conversation history per call
 const conversations = new Map();
 
@@ -1569,6 +1572,112 @@ app.post('/api/chatterbox-test', async (req, res) => {
       error: error.message
     });
   }
+});
+
+// API endpoint for AI chat conversation
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { message, history = [], model, style = 'balanced' } = req.body;
+    
+    if (!message || message.trim() === '') {
+      throw new Error('No message provided');
+    }
+    
+    logger.info('🤖 [CHAT] Processing chat request', {
+      messageLength: message.length,
+      historyLength: history.length,
+      model: model || process.env.OLLAMA_MODEL,
+      style
+    });
+    
+    const startTime = Date.now();
+    
+    // Build conversation context - Use Scout personality by default
+    const systemPrompt = `You are Scout, a customer service agent demonstrating AI-powered customer support capabilities. Your goal is to help customers with their needs in a professional, friendly manner.
+
+Your personality and approach:
+- Be professional, friendly, and helpful
+- Keep responses conversational and under 40 words for voice chat
+- Ask one question at a time when gathering information
+- For account verification, you can collect: first name, last name, and phone number
+- Always repeat back important information for confirmation
+- You can help with account verification, order status checks, scheduling, or general inquiries
+- Adapt your response length based on the style preference: ${style}
+
+${style === 'concise' 
+  ? 'Keep responses very brief and to the point.'
+  : style === 'detailed'
+  ? 'Provide more comprehensive responses when helpful.'
+  : 'Maintain balanced, conversational responses.'}`;
+    
+    const messages = [
+      { role: 'system', content: systemPrompt },
+      ...history.slice(-10), // Keep last 10 messages for context
+      { role: 'user', content: message }
+    ];
+    
+    // Get AI response
+    const aiProvider = process.env.AI_PROVIDER || 'ollama';
+    let response;
+    
+    if (aiProvider === 'ollama') {
+      const ollamaModel = model || process.env.OLLAMA_MODEL || 'llama3.1:8b';
+      const ollamaResponse = await axios.post(`${GPU_SERVICES.OLLAMA_URL}/api/chat`, {
+        model: ollamaModel,
+        messages: messages,
+        stream: false,
+        options: {
+          temperature: 0.7,
+          top_p: 0.9,
+          max_tokens: 150
+        }
+      });
+      
+      response = ollamaResponse.data.message.content;
+    } else if (aiProvider === 'openai') {
+      // OpenAI fallback if configured
+      const { OpenAI } = require('openai');
+      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-3.5-turbo',
+        messages: messages,
+        max_tokens: 150,
+        temperature: 0.7
+      });
+      
+      response = completion.choices[0].message.content;
+    } else {
+      throw new Error(`Unknown AI provider: ${aiProvider}`);
+    }
+    
+    const processingTime = Date.now() - startTime;
+    
+    logger.info('✅ [CHAT] AI response generated', {
+      responseLength: response.length,
+      processingTime,
+      provider: aiProvider
+    });
+    
+    res.json({
+      success: true,
+      response,
+      processingTime,
+      provider: aiProvider,
+      model: model || process.env.OLLAMA_MODEL
+    });
+  } catch (error) {
+    logger.error('❌ [CHAT] Chat processing failed', { error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+// Chat interface endpoint
+app.get('/chat', (req, res) => {
+  res.sendFile(path.join(__dirname, 'ai-chat-session.html'));
 });
 
 // Root endpoint (EXACT MIRROR)
